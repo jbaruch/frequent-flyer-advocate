@@ -17,3 +17,43 @@ jobs:
       - uses: tesslio/publish@main
         with:
           token: ${{ secrets.TESSL_API_TOKEN }}
+
+  eval:
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tessl CLI
+        run: curl -fsSL https://get.tessl.io | sh
+      - name: Run evals
+        env:
+          TESSL_API_TOKEN: ${{ secrets.TESSL_API_TOKEN }}
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          tessl eval run . --json | tee eval-results.json
+      - name: Show eval results
+        if: always()
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          # Extract the eval run ID from the JSON output and view results
+          EVAL_ID=$(cat eval-results.json | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+          if [ -n "$EVAL_ID" ]; then
+            echo "Eval run: https://tessl.io/eval-runs/$EVAL_ID"
+            # Wait for eval to complete (poll every 30s, max 20min)
+            for i in $(seq 1 40); do
+              RESULT=$(tessl eval view "$EVAL_ID" --json 2>&1) || true
+              STATUS=$(echo "$RESULT" | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4)
+              echo "Status: $STATUS (attempt $i/40)"
+              if [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ]; then
+                tessl eval view "$EVAL_ID"
+                break
+              fi
+              sleep 30
+            done
+          fi
+      - name: Upload eval results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: eval-results.json
