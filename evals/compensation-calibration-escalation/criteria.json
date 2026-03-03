@@ -1,0 +1,56 @@
+{
+  "context": "Tests whether the agent honestly assesses a weak case (minor delay), calibrates David's compensation correctly based on both denied boarding severity and Executive Platinum status, applies correct DOT complaint timing for a rights violation, provides comprehensive escalation guidance, and avoids promising outcomes or advising legal threats.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "Weak case honesty",
+      "max_score": 15,
+      "description": "assessment-sarah.md advises AGAINST writing a formal complaint letter for a 20-25 minute ATC delay with no material consequences, or explicitly states this is a weak case not worth a formal letter"
+    },
+    {
+      "name": "Statutory denied boarding compensation",
+      "max_score": 15,
+      "description": "letter-david.md requests the maximum statutory compensation for denied boarding (references the specific dollar cap, e.g., up to $1,550 as of 2024, or '400% of one-way fare up to statutory limit')"
+    },
+    {
+      "name": "Status-scaled compensation",
+      "max_score": 10,
+      "description": "letter-david.md requests compensation that is explicitly elevated due to David's Executive Platinum status — mentions that elite members are entitled to proportionally greater recovery or specifically requests additional miles/benefits above what a standard member would receive"
+    },
+    {
+      "name": "Out-of-pocket expense reimbursement",
+      "max_score": 10,
+      "description": "letter-david.md requests reimbursement for the specific out-of-pocket losses (the $380 forfeited hotel and/or the $420 overnight expenses)"
+    },
+    {
+      "name": "DOT complaint: immediate filing",
+      "max_score": 15,
+      "description": "escalation-guide.md recommends filing a DOT complaint IMMEDIATELY (or 'in parallel' with sending the letter, or 'right away') — NOT waiting 30 days — for the denied boarding situation"
+    },
+    {
+      "name": "Executive contact as primary",
+      "max_score": 10,
+      "description": "escalation-guide.md identifies executive customer relations as the PRIMARY place to send the letter (not standard customer service as the first contact)"
+    },
+    {
+      "name": "DOT complaint channel cited",
+      "max_score": 10,
+      "description": "escalation-guide.md includes airconsumer.dot.gov (or air consumer complaints site at DOT) as the DOT complaint filing location"
+    },
+    {
+      "name": "Timeline expectations provided",
+      "max_score": 5,
+      "description": "escalation-guide.md includes specific timeline expectations: executive-level response window (e.g., 7-14 business days) AND a no-response escalation threshold (e.g., escalate after 30 days with no response)"
+    },
+    {
+      "name": "No outcome promises",
+      "max_score": 5,
+      "description": "Neither letter-david.md nor escalation-guide.md contains language that promises or guarantees David will receive specific compensation (no 'you will definitely get X' or 'you are guaranteed to receive')"
+    },
+    {
+      "name": "No lawsuit threats",
+      "max_score": 5,
+      "description": "letter-david.md does NOT advise or include any reference to filing a lawsuit, taking legal action, or retaining an attorney as leverage in the complaint letter itself"
+    }
+  ]
+}

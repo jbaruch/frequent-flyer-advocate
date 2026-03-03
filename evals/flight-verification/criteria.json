@@ -1,0 +1,51 @@
+{
+  "context": "Tests whether the agent verifies flight details against FlightAware before writing the complaint, handles flight number ambiguity (reuse across routes), documents the verification process, flags any discrepancies with the passenger's account, and uses independently verified data in the final letter rather than relying solely on the passenger's stated details.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "FlightAware lookup attempted",
+      "max_score": 15,
+      "description": "verification-report.md documents an attempt to look up the flight on FlightAware (or flightaware.com) — not just a generic web search, but specifically targeting FlightAware as a flight tracking source"
+    },
+    {
+      "name": "Flight number ambiguity noted",
+      "max_score": 15,
+      "description": "verification-report.md notes that this flight number may serve multiple routes or legs on the same day, or that Southwest commonly reuses flight numbers, or that disambiguation was needed — any acknowledgment that a single flight number doesn't necessarily identify a unique flight"
+    },
+    {
+      "name": "Route verification attempted",
+      "max_score": 10,
+      "description": "verification-report.md attempts to confirm whether WN2174 (or SW2174/Southwest 2174) actually flew the Oakland (OAK) to Los Angeles (LAX) route on February 20, 2026"
+    },
+    {
+      "name": "Delay duration cross-checked",
+      "max_score": 10,
+      "description": "verification-report.md compares the passenger's claimed 4-hour delay against FlightAware's actual delay data for this flight, noting whether the claimed duration is confirmed, differs, or could not be verified"
+    },
+    {
+      "name": "Weather claim verification",
+      "max_score": 10,
+      "description": "The agent notes or investigates the passenger's claim that weather was clear at both airports despite the airline blaming weather — either by checking FlightAware's delay reason, weather data, or noting this as a point to verify"
+    },
+    {
+      "name": "Discrepancies flagged to user",
+      "max_score": 10,
+      "description": "If any detail doesn't match (route, delay duration, flight existence), verification-report.md explicitly flags it and notes that clarification from the passenger would be needed — does NOT silently accept or ignore mismatches"
+    },
+    {
+      "name": "Verified timestamps in letter",
+      "max_score": 15,
+      "description": "letter.md includes at least one specific timestamp, delay duration, or flight status that is attributed to an independent source (FlightAware, flight tracking records, publicly available data) rather than only citing the passenger's own account"
+    },
+    {
+      "name": "Independent verification attribution",
+      "max_score": 10,
+      "description": "letter.md explicitly attributes flight data to an independent source (e.g., 'per FlightAware records', 'according to flight tracking data', 'publicly available flight records confirm') — not just stating the data as if it came from the passenger"
+    },
+    {
+      "name": "No fabricated flight data",
+      "max_score": 5,
+      "description": "The agent does NOT invent or fabricate specific FlightAware data (exact minute timestamps, specific delay reasons) that it could not have actually retrieved — if data was unavailable, it says so rather than making it up"
+    }
+  ]
+}

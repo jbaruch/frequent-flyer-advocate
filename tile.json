@@ -1,0 +1,11 @@
+{
+  "name": "jbaruch/frequent-flyer-advocate",
+  "version": "0.1.0",
+  "private": false,
+  "summary": "Write professional, persuasive complaint letters to US airlines emphasizing loyalty status, DOT regulations, and airline commitments.",
+  "skills": {
+    "frequent-flyer-advocate": {
+      "path": "skills/frequent-flyer-advocate/SKILL.md"
+    }
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "context": "Tests whether the agent constructs a complaint letter following the required structural format, leads the opening with loyalty credentials, uses the airline's own published words against them, provides precise regulatory citations, calibrates compensation correctly for severity and elite status, and closes with appropriate tone and a specific response deadline.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "Subject line: flight details",
+      "max_score": 10,
+      "description": "Subject line includes both the flight number (DL408) and the date of the incident (January 14, 2026 or equivalent)"
+    },
+    {
+      "name": "Subject line: loyalty tier",
+      "max_score": 10,
+      "description": "Subject line references the passenger's loyalty tier (Platinum Medallion, Platinum, or equivalent elite status)"
+    },
+    {
+      "name": "Opening leads with loyalty",
+      "max_score": 10,
+      "description": "The opening paragraph establishes years of loyalty, approximate miles or lifetime status, and/or tier status BEFORE describing the incident — not the incident first"
+    },
+    {
+      "name": "Incident narrative specificity",
+      "max_score": 10,
+      "description": "The incident section includes at least three specific details: flight number, route (LAX to JFK), date, duration of delay (approximately 7 hours), class of service, or ticket price"
+    },
+    {
+      "name": "Airline quote present",
+      "max_score": 10,
+      "description": "The letter contains at least one exact verbatim quote attributed to a named Delta policy document, program document, mission/vision statement, or CEO communication (not paraphrased)"
+    },
+    {
+      "name": "Quote vs. reality contrast",
+      "max_score": 10,
+      "description": "The section containing the airline quote explicitly contrasts Delta's stated promise or commitment with what actually happened during the incident"
+    },
+    {
+      "name": "Specific regulatory citation",
+      "max_score": 10,
+      "description": "The regulatory basis section cites at least one specific regulation, act, or rule by name or number (e.g., FAA Reauthorization Act of 2024, a specific DOT rule number) — NOT just a vague reference to 'federal regulations' or 'consumer protection laws'"
+    },
+    {
+      "name": "Response deadline specified",
+      "max_score": 10,
+      "description": "The requested remedy section asks for a response within a specific timeframe falling between 14 and 21 business days"
+    },
+    {
+      "name": "Compensation matches major disruption",
+      "max_score": 10,
+      "description": "The compensation requested is consistent with a major disruption for an elite member: includes at least one of (50,000+ miles credit, full out-of-pocket expense reimbursement, or future travel voucher) AND the miles/voucher ask is NOT limited to the minor inconvenience range (e.g., not just a $50 voucher or 5,000 miles)"
+    },
+    {
+      "name": "Closing: DOT mention without threat",
+      "max_score": 10,
+      "description": "The closing references the passenger's awareness of or right to file a DOT complaint, but does NOT frame it as a direct threat, ultimatum, or demand ('I will file' as a consequence is acceptable; 'I am threatening you with' is not)"
+    }
+  ]
+}
