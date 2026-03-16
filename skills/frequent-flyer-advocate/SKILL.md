@@ -21,6 +21,7 @@ grounded in the airline's own published policies, vision statements, and federal
 - [references/flight-verification.md](references/flight-verification.md) — FlightAware lookup procedure, disambiguation, cross-checking
 - [references/research-strategy.md](references/research-strategy.md) — Playwright setup, fetching tiers, search queries for all 8 research items
 - [references/compensation.md](references/compensation.md) — severity tiers, compensation ranges, status multiplier
+- [scripts/credits-tracker.py](scripts/credits-tracker.py) — flight credits/vouchers inventory (shared with travel policy skill via `~/.claude/travel-credits/`)
 
 ---
 
@@ -207,6 +208,29 @@ After presenting the letter, provide actionable next steps:
 - Executive-level complaints: response within 7–14 business days
 - No response in 30 days → escalate to DOT
 - Inadequate initial response → reply once reiterating the request before escalating
+
+---
+
+## Flight Credits Inventory
+
+A global credits inventory at `~/.claude/travel-credits/` tracks all flight credits, vouchers, and upgrade certificates for the whole family. **Use `scripts/credits-tracker.py` for ALL inventory operations.** On first use, run `scripts/credits-tracker.py init` to set up storage — default `~/.claude/travel-credits/` or a custom path (e.g. Google Drive) symlinked from there.
+
+### Before writing the letter — check prior compensation history
+
+Run `scripts/credits-tracker.py list --passenger <name> --airline <code>` to see what compensation this passenger has already received from this airline. A pattern of repeated failures with inadequate vouchers is a powerful escalation lever:
+
+> "This is the third service failure in six months. The $50 voucher offered after the February incident (reference: DTV-0060219498637) was already inadequate — offering the same response for a far more serious disruption would be insulting."
+
+### After compensation arrives — log it
+
+When the complaint results in compensation, add it to the credits inventory immediately:
+```
+scripts/credits-tracker.py add --type VOUCHER --description "Compensation for DL1234 delay 2026-03-15" \
+  --value 200 --passenger "Baruch Sadogursky" --airline DL --expiry <date> \
+  --restrictions "<any terms from the compensation offer>"
+```
+
+This ensures any skill that checks the inventory (e.g., `jbaruch/jbaruch-travel-policy` during flight searches) picks it up automatically.
 
 ---
 
