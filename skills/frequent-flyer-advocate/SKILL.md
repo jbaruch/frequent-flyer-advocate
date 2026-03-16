@@ -35,10 +35,8 @@ long questionnaire. Listen, then ask targeted follow-ups based on what's missing
 - Flight number and date
 - What happened (the core complaint)
 - Loyalty program tier/status (if any) and approximate years/miles of loyalty
-- **Desired outcome** — explicitly ask what they want: miles credit, voucher, cash refund,
-  written apology, policy change, or a recommendation from you. Do NOT skip this question;
-  it shapes the entire remedy section of the letter. If the user says "whatever I can get,"
-  ask if they'd like you to recommend based on severity.
+- **Desired outcome** — if not already stated, ask what they want (miles, voucher, refund,
+  apology, or your recommendation). This shapes the remedy section — do not skip it.
 
 ### Context-dependent follow-ups
 
@@ -71,22 +69,10 @@ Summarize what you understand back to the user and confirm before moving to veri
 
 ### Check prior compensation history
 
-Once you know the passenger name and airline, you MUST check the credits inventory for
-prior compensation from this airline before proceeding to Phase 2:
-
-```
-python3 <this-skill-dir>/scripts/credits-tracker.py list --passenger <name> --airline <code>
-```
-
-The inventory works without initialization — it returns an empty list if no credits exist.
-If there IS a history of prior compensation (especially inadequate vouchers for repeated
-failures), note it — this is a powerful escalation lever for the letter:
-
-> "This is the third service failure in six months. The $50 voucher offered after the
-> February incident (reference: DTV-0060219498637) was already inadequate — offering
-> the same response for a far more serious disruption would be insulting."
-
-If no prior credits exist, move on — do not mention the inventory to the user.
+Once you know the passenger name and airline, check the credits inventory for prior
+compensation: `python3 <this-skill-dir>/scripts/credits-tracker.py list --passenger <name> --airline <code>`.
+If it returns credits (especially inadequate vouchers for repeated failures), use them as
+escalation leverage in the letter. If empty or unavailable, continue immediately.
 
 ---
 
@@ -271,11 +257,9 @@ picks up the new credit automatically.
   definitely get X" is not.
 - **Be honest about weak cases.** If the situation doesn't warrant a strong complaint, say
   so respectfully. A 15-minute delay with no consequences is not worth a 2-page letter.
-- **US airlines only.** This skill covers DOT/FAA jurisdiction. Do NOT file, draft, or
-  recommend DOT complaints for non-US carriers (e.g., Air Canada, British Airways, Lufthansa).
-  DOT consumer complaints apply only to US-based airlines. If the user's situation involves a
-  foreign carrier, clearly state this is outside scope, then suggest the appropriate framework
-  (Canadian Transportation Agency for Canadian carriers, EU261 for EU carriers, Montreal
-  Convention for international flights) so the user is not left empty-handed.
+- **US airlines only.** Do NOT file or draft DOT complaints for non-US carriers (Air Canada,
+  Lufthansa, etc.) — DOT complaints apply only to US-based airlines. For foreign carriers,
+  state this is outside scope and point to the right framework: Canadian Transportation
+  Agency, EU261, or Montreal Convention.
 - **Privacy.** Remind the user not to share sensitive information (SSN, full credit card
   numbers). Confirmation numbers, ticket numbers, and frequent flyer numbers are appropriate.
