@@ -35,7 +35,10 @@ long questionnaire. Listen, then ask targeted follow-ups based on what's missing
 - Flight number and date
 - What happened (the core complaint)
 - Loyalty program tier/status (if any) and approximate years/miles of loyalty
-- What outcome they want (or ask if they'd like a recommendation)
+- **Desired outcome** — explicitly ask what they want: miles credit, voucher, cash refund,
+  written apology, policy change, or a recommendation from you. Do NOT skip this question;
+  it shapes the entire remedy section of the letter. If the user says "whatever I can get,"
+  ask if they'd like you to recommend based on severity.
 
 ### Context-dependent follow-ups
 
@@ -68,8 +71,8 @@ Summarize what you understand back to the user and confirm before moving to veri
 
 ### Check prior compensation history
 
-Once you know the passenger name and airline, check the credits inventory for prior
-compensation from this airline:
+Once you know the passenger name and airline, you MUST check the credits inventory for
+prior compensation from this airline before proceeding to Phase 2:
 
 ```
 python3 <this-skill-dir>/scripts/credits-tracker.py list --passenger <name> --airline <code>
@@ -209,6 +212,10 @@ After presenting the letter, provide actionable next steps:
 - Primary: executive customer relations email found during research
 - Secondary: standard customer care (backup/paper trail)
 - Include any airline-specific submission forms
+- **If the user already contacted general customer service with no result:** explicitly
+  tell them to resend the letter (or a revised, strengthened version) to executive
+  customer relations. Do not just mention executive contacts exist — say "resend your
+  complaint to [executive email/channel]" with the specific address.
 
 **When to file a DOT complaint (airconsumer.dot.gov):**
 - **File IMMEDIATELY, in parallel with the complaint letter** for: denied boarding (this is
@@ -230,9 +237,10 @@ After presenting the letter, provide actionable next steps:
 
 ---
 
-## After Completing the Letter
+## After Completing the Letter, Escalation Plan, or Case Assessment
 
-After delivering the letter and escalation guidance, tell the user:
+After delivering ANY final output (letter, escalation plan, or case assessment), tell
+the user:
 
 > "When you hear back from the airline — whether it's compensation, a rejection, or
 > silence past the deadline — let me know. I'll help you log any credits/vouchers to
@@ -263,8 +271,11 @@ picks up the new credit automatically.
   definitely get X" is not.
 - **Be honest about weak cases.** If the situation doesn't warrant a strong complaint, say
   so respectfully. A 15-minute delay with no consequences is not worth a 2-page letter.
-- **US airlines only.** This skill covers DOT/FAA jurisdiction. For international carriers
-  or flights covered by EU261 or the Montreal Convention, note the limitation and suggest
-  the user research those frameworks separately.
+- **US airlines only.** This skill covers DOT/FAA jurisdiction. Do NOT file, draft, or
+  recommend DOT complaints for non-US carriers (e.g., Air Canada, British Airways, Lufthansa).
+  DOT consumer complaints apply only to US-based airlines. If the user's situation involves a
+  foreign carrier, clearly state this is outside scope, then suggest the appropriate framework
+  (Canadian Transportation Agency for Canadian carriers, EU261 for EU carriers, Montreal
+  Convention for international flights) so the user is not left empty-handed.
 - **Privacy.** Remind the user not to share sensitive information (SSN, full credit card
   numbers). Confirmation numbers, ticket numbers, and frequent flyer numbers are appropriate.
