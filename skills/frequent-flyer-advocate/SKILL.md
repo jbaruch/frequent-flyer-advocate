@@ -21,7 +21,7 @@ grounded in the airline's own published policies, vision statements, and federal
 - [references/flight-verification.md](references/flight-verification.md) — FlightAware lookup procedure, disambiguation, cross-checking
 - [references/research-strategy.md](references/research-strategy.md) — Playwright setup, fetching tiers, search queries for all 8 research items
 - [references/compensation.md](references/compensation.md) — severity tiers, compensation ranges, status multiplier
-- [scripts/credits-tracker.py](scripts/credits-tracker.py) — flight credits/vouchers inventory (shared with travel policy skill via `~/.claude/travel-credits/`)
+- [scripts/credits-tracker.py](scripts/credits-tracker.py) — flight credits/vouchers inventory (shared globally via `~/.claude/travel-credits/`). Run with full path: `python3 <this-skill-dir>/scripts/credits-tracker.py`
 
 ---
 
@@ -65,6 +65,25 @@ relevant.
 ### When you have enough
 
 Summarize what you understand back to the user and confirm before moving to verification.
+
+### Check prior compensation history
+
+Once you know the passenger name and airline, check the credits inventory for prior
+compensation from this airline:
+
+```
+python3 <this-skill-dir>/scripts/credits-tracker.py list --passenger <name> --airline <code>
+```
+
+The inventory works without initialization — it returns an empty list if no credits exist.
+If there IS a history of prior compensation (especially inadequate vouchers for repeated
+failures), note it — this is a powerful escalation lever for the letter:
+
+> "This is the third service failure in six months. The $50 voucher offered after the
+> February incident (reference: DTV-0060219498637) was already inadequate — offering
+> the same response for a far more serious disruption would be insulting."
+
+If no prior credits exist, move on — do not mention the inventory to the user.
 
 ---
 
@@ -211,26 +230,25 @@ After presenting the letter, provide actionable next steps:
 
 ---
 
-## Flight Credits Inventory
+## After Completing the Letter
 
-A global credits inventory at `~/.claude/travel-credits/` tracks all flight credits, vouchers, and upgrade certificates for the whole family. **Use `scripts/credits-tracker.py` for ALL inventory operations.** On first use, run `scripts/credits-tracker.py init` to set up storage — default `~/.claude/travel-credits/` or a custom path (e.g. Google Drive) symlinked from there.
+After delivering the letter and escalation guidance, tell the user:
 
-### Before writing the letter — check prior compensation history
+> "When you hear back from the airline — whether it's compensation, a rejection, or
+> silence past the deadline — let me know. I'll help you log any credits/vouchers to
+> the inventory and draft a follow-up or DOT complaint if needed."
 
-Run `scripts/credits-tracker.py list --passenger <name> --airline <code>` to see what compensation this passenger has already received from this airline. A pattern of repeated failures with inadequate vouchers is a powerful escalation lever:
+If the user returns with a compensation outcome, log it immediately:
 
-> "This is the third service failure in six months. The $50 voucher offered after the February incident (reference: DTV-0060219498637) was already inadequate — offering the same response for a far more serious disruption would be insulting."
-
-### After compensation arrives — log it
-
-When the complaint results in compensation, add it to the credits inventory immediately:
 ```
-scripts/credits-tracker.py add --type VOUCHER --description "Compensation for DL1234 delay 2026-03-15" \
+python3 <this-skill-dir>/scripts/credits-tracker.py add --type VOUCHER \
+  --description "Compensation for DL1234 delay 2026-03-15" \
   --value 200 --passenger "Baruch Sadogursky" --airline DL --expiry <date> \
   --restrictions "<any terms from the compensation offer>"
 ```
 
-This ensures any skill that checks the inventory (e.g., `jbaruch/jbaruch-travel-policy` during flight searches) picks it up automatically.
+This ensures any skill that checks the global inventory at `~/.claude/travel-credits/`
+picks up the new credit automatically.
 
 ---
 
