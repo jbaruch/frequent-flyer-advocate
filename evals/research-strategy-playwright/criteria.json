@@ -1,5 +1,5 @@
 {
-  "context": "Tests whether the agent checks for Playwright MCP availability before researching, researches all required policy areas before writing, documents findings comprehensively, parallelizes searches, and produces a letter grounded in actual researched quotes rather than fabricated or generic content.",
+  "context": "Tests whether the agent checks for Playwright MCP availability before researching, checks the credits inventory for prior compensation history, researches all required policy areas before writing, documents findings comprehensively, and produces a letter grounded in actual researched quotes rather than fabricated or generic content.",
   "type": "weighted_checklist",
   "checklist": [
     {
@@ -9,8 +9,13 @@
     },
     {
       "name": "Playwright install command",
-      "max_score": 10,
+      "max_score": 5,
       "description": "If research-notes.md indicates Playwright was NOT available, it includes the one-command install suggestion: 'claude mcp add playwright -- npx @playwright/mcp@latest' (or equivalent close paraphrase)"
+    },
+    {
+      "name": "Credits inventory consulted",
+      "max_score": 8,
+      "description": "research-notes.md documents checking the credits inventory (credits-tracker.py list) for prior compensation from United Airlines for Marcus Webb before proceeding to letter writing — or notes that no prior credits were found"
     },
     {
       "name": "Customer Service Plan researched",
@@ -34,7 +39,7 @@
     },
     {
       "name": "FAA Reauthorization Act researched",
-      "max_score": 10,
+      "max_score": 7,
       "description": "research-notes.md documents findings on FAA Reauthorization Act of 2024 provisions relevant to the complaint (e.g., refund requirements, denied boarding protections)"
     },
     {

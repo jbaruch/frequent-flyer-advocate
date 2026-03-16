@@ -1,0 +1,61 @@
+{
+  "context": "Tests whether the agent follows the Phase 1 intake methodology: identifying the essential questions about flight details, delay specifics, consequential damages, loyalty tier, prior contact history, and documentation, while organizing them into logical categories rather than firing off a flat numbered list, and providing a realistic preliminary case assessment.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "Flight details requested",
+      "max_score": 8,
+      "description": "Asks for specific flight details including at minimum the flight number and/or date"
+    },
+    {
+      "name": "Delay specifics requested",
+      "max_score": 8,
+      "description": "Asks about the delay duration and/or the reason given by the airline"
+    },
+    {
+      "name": "Consequential damages asked",
+      "max_score": 10,
+      "description": "Asks about missed connections, financial losses, or other downstream impacts caused by the delay"
+    },
+    {
+      "name": "Loyalty tier asked",
+      "max_score": 10,
+      "description": "Asks for the specific AAdvantage tier/status level (not just whether they are a member)"
+    },
+    {
+      "name": "Documentation asked",
+      "max_score": 7,
+      "description": "Asks what documentation the client has (receipts, airline communications, boarding passes, etc.)"
+    },
+    {
+      "name": "Severity amplifiers identified",
+      "max_score": 9,
+      "description": "Identifies or asks about at least one severity amplifier (e.g., tarmac confinement, no communication from the airline, denied meal vouchers, medical situation)"
+    },
+    {
+      "name": "Desired outcome asked",
+      "max_score": 7,
+      "description": "Asks what outcome the client is seeking (e.g., miles credit, voucher, cash refund, written apology)"
+    },
+    {
+      "name": "Prior contact asked",
+      "max_score": 10,
+      "description": "Asks whether the client has already contacted American Airlines about this issue and whether any offers have been made or accepted — per SKILL.md Phase 1 'prior customer service contacts and any offers already made or accepted'"
+    },
+    {
+      "name": "Questions organized in categories",
+      "max_score": 10,
+      "description": "Questions are grouped into logical categories or phases rather than presented as a flat numbered list of 10+ items all at once"
+    },
+    {
+      "name": "Essential questions first",
+      "max_score": 10,
+      "description": "Identifies or separates the essential must-have questions (flight details, what happened, loyalty tier) from context-dependent follow-ups"
+    },
+    {
+      "name": "Case strength factors named",
+      "max_score": 11,
+      "description": "Names at least two specific factors that would strengthen or weaken the case (e.g., elite status level, presence of consequential damages, delay duration, documentation quality)"
+    }
+  ]
+}

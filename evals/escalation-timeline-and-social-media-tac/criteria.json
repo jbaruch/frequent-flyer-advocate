@@ -1,0 +1,61 @@
+{
+  "context": "Tests whether the agent correctly identifies that 42 days have passed (exceeding the 30-day threshold), recommends filing a DOT complaint now with the specific filing channel, directs Priya to resend to executive relations, includes social media tactics, refrains from advising lawsuit threats, avoids promising specific outcomes, recognizes the cancellation itself as a DOT-filing trigger, and includes follow-up compensation logging guidance.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "DOT complaint recommended",
+      "max_score": 11,
+      "description": "Recommends that Priya file a DOT complaint, given that more than 30 days have passed without a substantive airline response"
+    },
+    {
+      "name": "DOT filing channel specified",
+      "max_score": 7,
+      "description": "Provides the specific DOT filing channel or URL (airconsumer.dot.gov or similar) rather than just mentioning DOT in the abstract"
+    },
+    {
+      "name": "Executive contacts as primary",
+      "max_score": 10,
+      "description": "Recommends re-sending or escalating to executive customer relations (not general customer service) as the primary escalation target"
+    },
+    {
+      "name": "Resend letter to executive relations",
+      "max_score": 8,
+      "description": "Advises Priya to resend her complaint letter (or a revised/strengthened version) specifically to executive customer relations, not just mention executive contacts as an abstract channel"
+    },
+    {
+      "name": "Social media tactics included",
+      "max_score": 11,
+      "description": "Includes at least one concrete social media tactic (e.g., tagging airline on Twitter/X, posting on LinkedIn, using specific hashtags)"
+    },
+    {
+      "name": "Social media channels named",
+      "max_score": 7,
+      "description": "Names at least one specific social media platform to use for the escalation"
+    },
+    {
+      "name": "No lawsuit threat advised",
+      "max_score": 11,
+      "description": "Does NOT advise Priya to threaten a lawsuit or take legal action as a tactic"
+    },
+    {
+      "name": "No outcome promised",
+      "max_score": 11,
+      "description": "Does NOT promise or guarantee that Priya will receive reimbursement or any specific result"
+    },
+    {
+      "name": "Cancellation short-notice DOT basis",
+      "max_score": 9,
+      "description": "Recognizes that a cancellation with less than 3 hours notice may independently warrant a DOT filing based on the cancellation itself (refund rights, rebooking obligations), not only because 30 days have passed without response"
+    },
+    {
+      "name": "Compensation logging guidance",
+      "max_score": 7,
+      "description": "Includes guidance for Priya to come back and log any compensation received (vouchers, credits, miles) to track it — reflecting the 'After Completing the Letter' workflow in the skill"
+    },
+    {
+      "name": "Timeline expectations set",
+      "max_score": 8,
+      "description": "Provides realistic timeline expectations for the escalated complaint (e.g., expected response timeframe after re-sending or DOT filing)"
+    }
+  ]
+}
