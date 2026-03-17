@@ -1,0 +1,51 @@
+{
+  "context": "Tests whether the skill checks for pending complaints at the start of a session, correctly resolves them based on user responses, logs credits to the travel credits inventory when the resolution includes miles/vouchers, and uses CLOSED for no-response cases to prevent re-asking.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "Pending complaints checked first",
+      "max_score": 12,
+      "description": "session-log.md shows that pending complaints were checked before starting intake for the new complaint — the pending check happens first, not after"
+    },
+    {
+      "name": "DL891 resolved as PARTIAL",
+      "max_score": 12,
+      "description": "Records DL891 resolution as PARTIAL (or RESOLVED) — the user accepted 15K miles and a $50 voucher, which is less than the 25K miles requested"
+    },
+    {
+      "name": "DL891 credits logged",
+      "max_score": 15,
+      "description": "Shows the credits-tracker.py add command (or describes logging) for the 15,000 miles AND the $50 voucher from the DL891 resolution — both should be tracked in the travel credits inventory"
+    },
+    {
+      "name": "DL2044 resolved as CLOSED",
+      "max_score": 15,
+      "description": "Records DL2044 resolution as CLOSED (not PENDING, not DENIED) — the user said 'complete silence' and 'done waiting', so CLOSED is correct to prevent the skill from asking again"
+    },
+    {
+      "name": "DL2044 no credits logged",
+      "max_score": 8,
+      "description": "Does NOT attempt to log credits for DL2044 since the airline never responded — there is nothing to log"
+    },
+    {
+      "name": "DOT escalation suggested for DL2044",
+      "max_score": 10,
+      "description": "Suggests or notes that the DL2044 downgrade with no response after 30+ days may warrant a DOT complaint filing, since the user has given up on the airline's direct response"
+    },
+    {
+      "name": "New complaint intake proceeds",
+      "max_score": 10,
+      "description": "After resolving pending complaints, proceeds to intake for the new Spirit NK412 complaint — asks relevant follow-up questions"
+    },
+    {
+      "name": "Voucher expiry captured",
+      "max_score": 8,
+      "description": "The credits-tracker command for the $50 voucher includes the December 2026 expiry date that the user mentioned"
+    },
+    {
+      "name": "Resolve commands shown",
+      "max_score": 10,
+      "description": "Shows or describes the complaints-bank.py resolve commands for both complaints with appropriate --resolution and --note arguments"
+    }
+  ]
+}

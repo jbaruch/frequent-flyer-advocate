@@ -1,0 +1,61 @@
+{
+  "context": "Tests whether the skill correctly files a completed complaint to the complaint bank with accurate parameters, provides escalation guidance with compensation logging instructions, and prompts the user to return with the resolution.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "Complaint filed to bank",
+      "max_score": 15,
+      "description": "post-letter-actions.md shows the complaints-bank.py file command (or describes filing) with the complaint details"
+    },
+    {
+      "name": "Correct airline and flight",
+      "max_score": 8,
+      "description": "The filing command uses airline=UA and flight=UA456"
+    },
+    {
+      "name": "Correct category",
+      "max_score": 10,
+      "description": "The filing command uses category=DENIED_BOARDING (not DELAY, not SERVICE, not OTHER)"
+    },
+    {
+      "name": "Correct severity",
+      "max_score": 8,
+      "description": "The filing command uses severity=RIGHTS_VIOLATION (denied boarding is a federal rights violation per the skill's severity framework)"
+    },
+    {
+      "name": "Route and date present",
+      "max_score": 7,
+      "description": "The filing command includes route=SFO-DEN and flight-date=2026-02-28"
+    },
+    {
+      "name": "Summary is concise",
+      "max_score": 7,
+      "description": "The filing command includes a summary that is 1-2 sentences describing what happened — not a full paragraph or the entire letter"
+    },
+    {
+      "name": "Outcome recorded",
+      "max_score": 8,
+      "description": "The filing command includes what was requested in the letter (statutory compensation, $450 reimbursement, miles, upgrade — at least two of these)"
+    },
+    {
+      "name": "DOT immediate filing recommended",
+      "max_score": 12,
+      "description": "Escalation guidance recommends filing a DOT complaint immediately (in parallel with the letter) since denied boarding is a federal rights violation"
+    },
+    {
+      "name": "Follow-up prompt included",
+      "max_score": 10,
+      "description": "Tells Tom to come back when he hears from the airline so the resolution can be recorded and any credits/vouchers logged"
+    },
+    {
+      "name": "Credits logging mentioned for future",
+      "max_score": 8,
+      "description": "Notes that when Tom reports back with compensation, miles or vouchers should be logged to the credits inventory"
+    },
+    {
+      "name": "Resolve command shown for future",
+      "max_score": 7,
+      "description": "Shows or describes the complaints-bank.py resolve command that will be used when Tom reports the outcome"
+    }
+  ]
+}

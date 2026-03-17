@@ -22,15 +22,30 @@ grounded in the airline's own published policies, vision statements, and federal
 - [references/research-strategy.md](references/research-strategy.md) — Playwright setup, fetching tiers, search queries for all 8 research items
 - [references/compensation.md](references/compensation.md) — severity tiers, compensation ranges, status multiplier
 - [scripts/credits-tracker.py](scripts/credits-tracker.py) — flight credits/vouchers inventory (shared globally via `~/.claude/travel-credits/`). Run with full path: `python3 <this-skill-dir>/scripts/credits-tracker.py`
+- [scripts/complaints-bank.py](scripts/complaints-bank.py) — past complaint history for pattern detection (shared globally via `~/.claude/complaint-bank/`). Run with full path: `python3 <this-skill-dir>/scripts/complaints-bank.py`
 
 ---
 
 ## Phase 1: Intake & Intelligent Questioning
 
+### First: check for pending complaints
+
+Before anything else, run:
+`python3 <this-skill-dir>/scripts/complaints-bank.py pending`
+If there are pending complaints, ask the user about each one: "Last time we filed a
+complaint about [flight] on [date] — did you hear back?" Record the resolution with
+`resolve --id <id> --resolution <STATUS> --note "..."`. Use RESOLVED, PARTIAL, DENIED,
+or ESCALATED if they have an update. Use CLOSED if they never heard back or don't want
+to track it further. If the resolution included credits, miles, or vouchers, also log
+them with `credits-tracker.py add` so the travel credits inventory stays current.
+Then proceed with the new complaint.
+
+### Intake
+
 Start by asking the user to describe what happened in their own words. Do NOT present a
 long questionnaire. Listen, then ask targeted follow-ups based on what's missing.
 
-### Always gather (ask if not provided):
+### Always gather (ask if not provided) — present these first, before follow-ups:
 - Airline name
 - Flight number and date
 - What happened (the core complaint)
@@ -69,10 +84,18 @@ Summarize what you understand back to the user and confirm before moving to veri
 
 ### Check prior compensation history
 
-Once you know the passenger name and airline, check the credits inventory for prior
-compensation: `python3 <this-skill-dir>/scripts/credits-tracker.py list --passenger <name> --airline <code>`.
-If it returns credits (especially inadequate vouchers for repeated failures), use them as
-escalation leverage in the letter. If empty or unavailable, continue immediately.
+Once you know the passenger name and airline, always run:
+`python3 <this-skill-dir>/scripts/credits-tracker.py list --passenger <name> --airline <code>`
+and note the result in your research documentation. If credits are found, use them as
+escalation leverage in the letter. If empty or unavailable, note that and continue.
+
+### Check complaint history
+
+Also run:
+`python3 <this-skill-dir>/scripts/complaints-bank.py check --airline <code> --passenger <name>`
+and note the result in your research documentation. If patterns exist (same category 2+
+times, prior DENIED complaints, same route recurring), hold them for Phase 4 — see the
+complaint-patterns rule for when to use them and when not to.
 
 ---
 
@@ -118,8 +141,8 @@ queries). Key points:
    ```
 2. **Research all 8 items:** Customer Service Plan, Contract of Carriage, mission/vision
    statements, tier benefits, DOT rights, FAA Reauth Act, enforcement actions, executive contacts
-3. **Research gate:** do not proceed to writing until you have usable quotes from at least
-   items 1–6
+3. **Research gate:** do not proceed to writing until you have usable findings from items
+   1–6 (see letter-quality rule for verbatim quote requirement)
 
 Always parallelize independent searches and fetches.
 
@@ -143,17 +166,15 @@ Example: "Diamond Medallion Member — Unacceptable Experience on DL1234, Feb 15
 
 ### 1. Opening: Establish the relationship
 Lead with loyalty — years of patronage, miles flown, tier status, emotional connection to
-the brand. Tone: "I am not a random complainer; I am one of your most valuable customers
-giving you the opportunity to make this right."
+the brand. (See letter-quality rule for specific requirements.)
 
 ### 2. Incident narrative
 Chronological, factual, specific. Include flight number, date, cities, timestamps,
 seat assignment, and exactly what happened. Use dispassionate language — facts speak for
 themselves. Note crew/agent responses factually.
 
-Prefer FlightAware-verified data over the passenger's approximate claims. Example:
-"According to FlightAware flight tracking records, Flight XX123 departed 3 hours and
-47 minutes late" is far stronger than "my flight was delayed about 4 hours."
+Prefer FlightAware-verified data over the passenger's approximate claims.
+(See letter-quality rule for specific requirements.)
 
 ### 3. Impact statement
 Concrete consequences: financial losses, missed events, hours wasted, family stress.
@@ -198,10 +219,7 @@ After presenting the letter, provide actionable next steps:
 - Primary: executive customer relations email found during research
 - Secondary: standard customer care (backup/paper trail)
 - Include any airline-specific submission forms
-- **If the user already contacted general customer service with no result:** explicitly
-  tell them to resend the letter (or a revised, strengthened version) to executive
-  customer relations. Do not just mention executive contacts exist — say "resend your
-  complaint to [executive email/channel]" with the specific address.
+- If the user already contacted general customer service, see escalation-output rule.
 
 **When to file a DOT complaint (airconsumer.dot.gov):**
 - **File IMMEDIATELY, in parallel with the complaint letter** for: denied boarding (this is
@@ -225,41 +243,13 @@ After presenting the letter, provide actionable next steps:
 
 ## After Completing the Letter, Escalation Plan, or Case Assessment
 
-After delivering ANY final output (letter, escalation plan, or case assessment), tell
-the user:
+See escalation-output rule for what to include in output documents.
 
-> "When you hear back from the airline — whether it's compensation, a rejection, or
-> silence past the deadline — let me know. I'll help you log any credits/vouchers to
-> the inventory and draft a follow-up or DOT complaint if needed."
+### File complaint to bank
 
-If the user returns with a compensation outcome, log it immediately:
+After the letter is finalized, always file it:
+`python3 <this-skill-dir>/scripts/complaints-bank.py file --airline <code> --flight <flight> --flight-date <YYYY-MM-DD> --route <ORIG-DEST> --passenger <name> --category <CAT> --severity <SEV> --summary "<1-2 sentences>" --outcome "<what was requested>"`
 
-```
-python3 <this-skill-dir>/scripts/credits-tracker.py add --type VOUCHER \
-  --description "Compensation for DL1234 delay 2026-03-15" \
-  --value 200 --passenger "Baruch Sadogursky" --airline DL --expiry <date> \
-  --restrictions "<any terms from the compensation offer>"
-```
-
-This ensures any skill that checks the global inventory at `~/.claude/travel-credits/`
-picks up the new credit automatically.
-
----
-
-## Rules & Boundaries
-
-- **NEVER fabricate** regulations, docket numbers, legal citations, airline policy quotes,
-  or enforcement actions. Always verify through research. If you cannot find a source, do
-  not cite it.
-- **NEVER advise threatening lawsuits** or legal action. Demonstrate knowledge of rights;
-  leave legal threats to lawyers.
-- **NEVER promise outcomes.** "You are entitled to X under DOT rules" is fine; "you will
-  definitely get X" is not.
-- **Be honest about weak cases.** If the situation doesn't warrant a strong complaint, say
-  so respectfully. A 15-minute delay with no consequences is not worth a 2-page letter.
-- **US airlines only.** Do NOT file or draft DOT complaints for non-US carriers (Air Canada,
-  Lufthansa, etc.) — DOT complaints apply only to US-based airlines. For foreign carriers,
-  state this is outside scope and point to the right framework: Canadian Transportation
-  Agency, EU261, or Montreal Convention.
-- **Privacy.** Remind the user not to share sensitive information (SSN, full credit card
-  numbers). Confirmation numbers, ticket numbers, and frequent flyer numbers are appropriate.
+If the user returns with a compensation outcome, log it in both systems:
+`python3 <this-skill-dir>/scripts/credits-tracker.py add --type VOUCHER --description "..." --value <amount> --passenger "..." --airline <code> --expiry <date> --restrictions "..."`
+`python3 <this-skill-dir>/scripts/complaints-bank.py resolve --id <id> --resolution <RESOLVED|PARTIAL|DENIED> --note "<what they got>"`

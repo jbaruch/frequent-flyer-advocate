@@ -3,19 +3,14 @@
   "type": "weighted_checklist",
   "checklist": [
     {
-      "name": "Playwright check noted",
-      "max_score": 15,
-      "description": "research-notes.md explicitly mentions checking for Playwright availability (or Playwright MCP, or browser tools) before beginning the research process — not just a passing reference, but an actual assessment of what fetching capability is available"
-    },
-    {
-      "name": "Playwright install command or confirmation",
-      "max_score": 5,
-      "description": "If Playwright was NOT available: research-notes.md includes the install suggestion 'claude mcp add playwright -- npx @playwright/mcp@latest' (or close paraphrase). If Playwright WAS available: research-notes.md confirms it was detected and used. Score full marks in either case as long as the agent acted correctly on the check result."
+      "name": "Playwright availability assessed and acted on",
+      "max_score": 18,
+      "description": "research-notes.md explicitly documents checking for Playwright MCP availability AND acts on the result: if Playwright was unavailable, includes the install command 'claude mcp add playwright -- npx @playwright/mcp@latest'; if Playwright was available, confirms it was detected and describes how it was used for research"
     },
     {
       "name": "Credits inventory consulted",
       "max_score": 8,
-      "description": "research-notes.md documents checking the credits inventory (credits-tracker.py list) for prior compensation from United Airlines for Marcus Webb before proceeding to letter writing — or notes that no prior credits were found"
+      "description": "research-notes.md documents running credits-tracker.py list for prior compensation from United Airlines for Marcus Webb — either shows results found or explicitly notes no prior credits exist"
     },
     {
       "name": "Customer Service Plan researched",
@@ -54,7 +49,7 @@
     },
     {
       "name": "Letter quotes a named source",
-      "max_score": 10,
+      "max_score": 12,
       "description": "letter.md includes at least one specific quote that is explicitly attributed to a named United policy document (Customer Service Plan, Contract of Carriage, mission statement, etc.) — not generic paraphrasing"
     }
   ]

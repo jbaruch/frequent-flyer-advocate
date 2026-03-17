@@ -1,0 +1,46 @@
+{
+  "context": "Tests whether the skill uses complaint history appropriately — referencing the genuine pattern (DFW-MIA same-route cancellation recurrence + prior DENIED) while not forcing the unrelated DFW-ORD delay into the narrative. Also tests that pattern references use matter-of-fact tone per the complaint-patterns rule.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "Prior DFW-MIA cancellation referenced",
+      "max_score": 18,
+      "description": "The letter references the prior AA923 DFW-MIA cancellation from November 2025 as evidence of a recurring problem — same route, same category, same airline"
+    },
+    {
+      "name": "Prior DENIED resolution cited",
+      "max_score": 15,
+      "description": "The letter mentions that the prior cancellation complaint was denied or inadequately resolved (the $100 voucher offer), using this as escalation leverage"
+    },
+    {
+      "name": "DFW-ORD delay NOT forced into narrative",
+      "max_score": 15,
+      "description": "The letter does NOT reference the DFW-ORD delay as part of the cancellation pattern — it is a different category (delay vs cancellation) on a different route. If mentioned at all, it is not presented as part of the same pattern"
+    },
+    {
+      "name": "Pattern stated matter-of-fact",
+      "max_score": 12,
+      "description": "The complaint history reference uses factual, measured tone — e.g., 'This is the second cancellation on this route in four months' rather than emotional language like 'I cannot believe this keeps happening'"
+    },
+    {
+      "name": "Pattern in opening or airline-vs-reality section",
+      "max_score": 10,
+      "description": "The complaint history reference appears in the opening (loyalty despite adversity) or the airline's-own-words-vs-reality section — NOT in the regulatory or remedy sections"
+    },
+    {
+      "name": "Loyalty opening present",
+      "max_score": 10,
+      "description": "The letter opens with Lisa's Executive Platinum status, 6 years, and/or 1.8M miles before describing the incident"
+    },
+    {
+      "name": "Compensation calibrated to pattern",
+      "max_score": 10,
+      "description": "The requested compensation reflects the escalated situation — higher than what was requested for the first cancellation, given that it was denied and the issue recurred"
+    },
+    {
+      "name": "Complaint bank consulted",
+      "max_score": 10,
+      "description": "The letter or process documentation shows that the complaint bank was checked (complaints-bank.py check) for Lisa Park / AA before writing"
+    }
+  ]
+}
