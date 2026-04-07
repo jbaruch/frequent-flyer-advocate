@@ -1,4 +1,4 @@
-name: Publish Tile
+name: Review & Publish Tile
 
 permissions:
   id-token: write
@@ -14,7 +14,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - uses: tesslio/setup-tessl@v2
         with:
           token: ${{ secrets.TESSL_API_TOKEN }}
-      - run: tessl tile publish
+      - run: tessl skill review --threshold 85 skills/frequent-flyer-advocate
+      - uses: jbaruch/tessl-smart-publish@v1
