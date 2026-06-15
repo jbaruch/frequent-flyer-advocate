@@ -2,13 +2,16 @@
 """
 Track flight credits, vouchers, and upgrade certificates for the whole family.
 Inventory stored globally at ~/.claude/travel-credits/inventory.md so any skill can access it.
-Run `init` first to set up storage (default or custom location like Google Drive).
+Run `status` to detect an existing store; never let the skill silently start a
+fresh empty inventory when the user may have real credits elsewhere (see issue #1).
 
 Supports multiple passengers and airlines — the primary use is Baruch + Alice travel,
 but credits for kids or on non-Delta airlines are tracked too so nothing expires forgotten.
 
 Usage:
-  python3 credits-tracker.py init
+  python3 credits-tracker.py status                           # present | empty | missing
+  python3 credits-tracker.py link --path /existing/credits    # adopt an existing store
+  python3 credits-tracker.py init                             # create a fresh empty inventory (default location)
   python3 credits-tracker.py list [--type TYPE] [--passenger NAME] [--airline CODE] [--verbose]
   python3 credits-tracker.py add --type TYPE --description DESC --value VALUE --passenger NAME [--expiry YYYY-MM-DD] [--airline CODE] [--restrictions TEXT] [--confirmation CODE]
   python3 credits-tracker.py use --id ID [--note TEXT]
@@ -33,6 +36,8 @@ import os
 import re
 import sys
 from datetime import datetime, timedelta
+
+import store_common
 
 CREDITS_DIR = os.path.join(os.path.expanduser("~"), ".claude", "travel-credits")
 INVENTORY_PATH = os.path.join(CREDITS_DIR, "inventory.md")
@@ -118,92 +123,45 @@ Track all active credits here. Use `credits-tracker.py` for all updates — do n
 """
 
 
-def ensure_inventory():
-    """Create the inventory file and directory if they don't exist.
+STORE = store_common.Store(
+    name="travel-credits inventory",
+    store_dir=CREDITS_DIR,
+    data_path=INVENTORY_PATH,
+    empty_content=EMPTY_INVENTORY,
+    is_empty=lambda content: not parse_credits(content, "active"),
+)
 
-    If CREDITS_DIR is a symlink, follow it (user chose a custom location via `init`).
-    Otherwise create the default directory.
-    """
-    if not os.path.exists(INVENTORY_PATH):
-        # Resolve symlinks — if CREDITS_DIR is a symlink, the real dir must exist
-        real_dir = os.path.realpath(CREDITS_DIR)
-        os.makedirs(real_dir, exist_ok=True)
-        with open(INVENTORY_PATH, "w") as f:
-            f.write(EMPTY_INVENTORY)
+
+def cmd_status(_args):
+    print(STORE.state())
+
+
+def cmd_link(args):
+    STORE.link(args.path)
 
 
 def cmd_init(_args):
-    """Interactive setup: choose default or custom storage location."""
-    if os.path.exists(CREDITS_DIR):
-        real_path = os.path.realpath(CREDITS_DIR)
-        is_symlink = os.path.islink(CREDITS_DIR)
-        if is_symlink:
-            print(f"Already initialized. Storage: {real_path} (symlinked from {CREDITS_DIR})")
-        else:
-            print(f"Already initialized. Storage: {real_path}")
+    """Create a fresh empty credits inventory at the default location.
 
-        has_credits = False
-        if os.path.exists(INVENTORY_PATH):
-            content = read_inventory()
-            has_credits = bool(parse_credits(content, "active"))
-
-        if has_credits:
-            print(f"Inventory has active credits. To change location, move the data manually.")
-            return
-        else:
-            response = input("No active credits. Reinitialize with a different location? [y/N] ").strip().lower()
-            if response != "y":
-                return
-            # Clean up existing
-            if is_symlink:
-                os.unlink(CREDITS_DIR)
-            else:
-                import shutil
-                shutil.rmtree(CREDITS_DIR)
-
-    print()
-    print("Where should the credits inventory be stored?")
-    print()
-    print(f"  1. Default: {CREDITS_DIR}")
-    print("  2. Custom path (e.g. Google Drive, Dropbox, iCloud)")
-    print()
-    choice = input("Choice [1/2]: ").strip()
-
-    if choice == "2":
-        custom = input("Enter full path to credits directory: ").strip()
-        custom = os.path.expanduser(custom)
-
-        if not custom:
-            print("ERROR: No path provided.", file=sys.stderr)
-            sys.exit(1)
-
-        # Create the custom directory
-        os.makedirs(custom, exist_ok=True)
-
-        # Create symlink from CREDITS_DIR -> custom
-        parent = os.path.dirname(CREDITS_DIR)
-        os.makedirs(parent, exist_ok=True)
-        os.symlink(custom, CREDITS_DIR)
-
-        print(f"✅ Created {custom}")
-        print(f"✅ Symlinked {CREDITS_DIR} → {custom}")
-    else:
-        os.makedirs(CREDITS_DIR, exist_ok=True)
-        print(f"✅ Created {CREDITS_DIR}")
-
-    # Create empty inventory
-    ensure_inventory()
+    To adopt an existing store (iCloud/Drive/Dropbox/prior install), use
+    `link --path <dir>` instead. The skill decides which to call after asking
+    the user — see SKILL.md "locate the stateful stores".
+    """
+    if os.path.exists(INVENTORY_PATH):
+        print(f"Already initialized at {os.path.realpath(INVENTORY_PATH)}.")
+        return
+    STORE.write_empty()
     print(f"✅ Initialized empty inventory at {os.path.realpath(INVENTORY_PATH)}")
 
 
 def read_inventory():
-    ensure_inventory()
+    STORE.ensure_ready()
     with open(INVENTORY_PATH, "r") as f:
         return f.read()
 
 
 def write_inventory(content):
-    ensure_inventory()
+    STORE.ensure_ready()
     with open(INVENTORY_PATH, "w") as f:
         f.write(content)
 
@@ -782,7 +740,14 @@ Examples:
     sm.add_argument("--passenger", help="Filter by passenger name (substring match)")
 
     # init
-    sub.add_parser("init", help="Set up credits storage (default or custom location like Google Drive)")
+    sub.add_parser("init", help="Create a fresh empty credits inventory at the default location")
+
+    # status
+    sub.add_parser("status", help="Report store state: present | empty | missing")
+
+    # link
+    lk = sub.add_parser("link", help="Symlink the default location to an existing credits inventory")
+    lk.add_argument("--path", required=True, help="Full path to the existing credits directory")
 
     args = parser.parse_args()
     if not args.command:
@@ -797,4 +762,6 @@ Examples:
         "check": cmd_check,
         "summary": cmd_summary,
         "init": cmd_init,
+        "status": cmd_status,
+        "link": cmd_link,
     }[args.command](args)

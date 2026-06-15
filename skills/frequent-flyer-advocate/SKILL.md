@@ -21,16 +21,47 @@ grounded in the airline's own published policies, vision statements, and federal
 - [references/flight-verification.md](references/flight-verification.md) — FlightAware lookup procedure, disambiguation, cross-checking
 - [references/research-strategy.md](references/research-strategy.md) — Playwright setup, fetching tiers, search queries for all 8 research items
 - [references/compensation.md](references/compensation.md) — severity tiers, compensation ranges, status multiplier
-- [scripts/credits-tracker.py](scripts/credits-tracker.py) — flight credits/vouchers inventory (shared globally via `~/.claude/travel-credits/`). Run with full path: `python3 <this-skill-dir>/scripts/credits-tracker.py`
-- [scripts/complaints-bank.py](scripts/complaints-bank.py) — past complaint history for pattern detection (shared globally via `~/.claude/complaint-bank/`). Run with full path: `python3 <this-skill-dir>/scripts/complaints-bank.py`
+- [scripts/credits-tracker.py](scripts/credits-tracker.py) — flight credits/vouchers inventory (shared globally via `~/.claude/travel-credits/`). Run with full path: `python3 <this-skill-dir>/scripts/credits-tracker.py`. Run `status` before reading — see Phase 1 "locate the stateful stores".
+- [scripts/complaints-bank.py](scripts/complaints-bank.py) — past complaint history for pattern detection (shared globally via `~/.claude/complaint-bank/`). Run with full path: `python3 <this-skill-dir>/scripts/complaints-bank.py`. Run `status` before reading — see Phase 1 "locate the stateful stores".
 
 ---
 
 ## Phase 1: Intake & Intelligent Questioning
 
-### First: check for pending complaints
+### First: locate the stateful stores (do not silently start fresh)
 
-Before anything else, run:
+The complaint bank and credits inventory accumulate value over time — prior
+complaints power pattern detection, prior credits are escalation leverage. Before
+reading either, confirm a store exists. Never assume the user has no history just
+because the default `~/.claude/` location is empty: they may keep it in iCloud,
+Google Drive, Dropbox, or a prior install.
+
+For **each** store, run its `status` command first:
+`python3 <this-skill-dir>/scripts/complaints-bank.py status`
+`python3 <this-skill-dir>/scripts/credits-tracker.py status`
+
+- **`present`** — a store with data exists; proceed.
+- **`empty`** — a store exists but has no entries; proceed (it was set up deliberately).
+- **`missing`** — no store yet. Do NOT let a read command create one silently. Ask the
+  user: *"I don't see a [complaint bank / credits inventory] yet. Do you already keep one
+  somewhere (iCloud, Google Drive, Dropbox, a prior install)? If so, what's the path?
+  Otherwise I'll start a fresh one."*
+  - If they give a path → `... <script> link --path <dir>` (symlinks it into the canonical
+    location so future runs find it automatically).
+  - If they confirm none → `... <script> init` (creates a fresh store with a
+    one-line confirmation, so it's a deliberate start, not a silent loss).
+
+The scripts never prompt — they run non-interactively under the agent. All asking
+happens here, in conversation. The scripts only detect (`status`), act (`link` /
+`init`), and signal a missing store (exit 3 + guidance) as a safety net.
+
+The read commands below (`pending`, `check`, `list`) refuse to auto-create a missing
+store: they print this same guidance to stderr and exit with status 3. If you see that,
+it means you skipped the locate step — handle it as the `missing` case above.
+
+### Then: check for pending complaints
+
+Once the stores are located, run:
 `python3 <this-skill-dir>/scripts/complaints-bank.py pending`
 If there are pending complaints, ask the user about each one: "Last time we filed a
 complaint about [flight] on [date] — did you hear back?" Record the resolution with

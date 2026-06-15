@@ -2,10 +2,13 @@
 """
 Track filed complaint letters for pattern detection across airlines and passengers.
 Storage at ~/.claude/complaint-bank/ so any skill can access it.
-Run `init` first to set up storage (default or custom location like Google Drive).
+Run `status` to detect an existing store; never let the skill silently start a
+fresh empty bank when the user may have real history elsewhere (see issue #1).
 
 Usage:
-  python3 complaints-bank.py init
+  python3 complaints-bank.py status                      # present | empty | missing
+  python3 complaints-bank.py link --path /existing/bank  # adopt an existing store
+  python3 complaints-bank.py init                        # create a fresh empty bank (default location)
   python3 complaints-bank.py file --airline CODE --flight FLNUM --flight-date YYYY-MM-DD --route ORIG-DEST --passenger NAME --category CAT --severity SEV --summary "..." --outcome "..."
   python3 complaints-bank.py check --airline CODE [--passenger NAME] [--route ROUTE]
   python3 complaints-bank.py resolve --id ID --resolution STATUS [--note TEXT]
@@ -22,6 +25,8 @@ import os
 import re
 import sys
 from datetime import datetime
+
+import store_common
 
 BANK_DIR = os.path.join(os.path.expanduser("~"), ".claude", "complaint-bank")
 COMPLAINTS_PATH = os.path.join(BANK_DIR, "complaints.md")
@@ -52,77 +57,45 @@ Filed complaints for pattern tracking. Use `complaints-bank.py` for all updates.
 """
 
 
-def ensure_bank():
-    if not os.path.exists(COMPLAINTS_PATH):
-        real_dir = os.path.realpath(BANK_DIR)
-        os.makedirs(real_dir, exist_ok=True)
-        with open(COMPLAINTS_PATH, "w") as f:
-            f.write(EMPTY_BANK)
+STORE = store_common.Store(
+    name="complaint bank",
+    store_dir=BANK_DIR,
+    data_path=COMPLAINTS_PATH,
+    empty_content=EMPTY_BANK,
+    is_empty=lambda content: not parse_complaints(content),
+)
+
+
+def cmd_status(_args):
+    print(STORE.state())
+
+
+def cmd_link(args):
+    STORE.link(args.path)
 
 
 def cmd_init(_args):
-    if os.path.exists(BANK_DIR):
-        real_path = os.path.realpath(BANK_DIR)
-        is_symlink = os.path.islink(BANK_DIR)
-        if is_symlink:
-            print(f"Already initialized. Storage: {real_path} (symlinked from {BANK_DIR})")
-        else:
-            print(f"Already initialized. Storage: {real_path}")
+    """Create a fresh empty complaint bank at the default location.
 
-        has_complaints = False
-        if os.path.exists(COMPLAINTS_PATH):
-            content = read_bank()
-            has_complaints = bool(parse_complaints(content))
-
-        if has_complaints:
-            print("Bank has filed complaints. To change location, move the data manually.")
-            return
-        else:
-            response = input("No complaints filed. Reinitialize with a different location? [y/N] ").strip().lower()
-            if response != "y":
-                return
-            if is_symlink:
-                os.unlink(BANK_DIR)
-            else:
-                import shutil
-                shutil.rmtree(BANK_DIR)
-
-    print()
-    print("Where should the complaint bank be stored?")
-    print()
-    print(f"  1. Default: {BANK_DIR}")
-    print("  2. Custom path (e.g. Google Drive, Dropbox, iCloud)")
-    print()
-    choice = input("Choice [1/2]: ").strip()
-
-    if choice == "2":
-        custom = input("Enter full path to complaint bank directory: ").strip()
-        custom = os.path.expanduser(custom)
-        if not custom:
-            print("ERROR: No path provided.", file=sys.stderr)
-            sys.exit(1)
-        os.makedirs(custom, exist_ok=True)
-        parent = os.path.dirname(BANK_DIR)
-        os.makedirs(parent, exist_ok=True)
-        os.symlink(custom, BANK_DIR)
-        print(f"Created {custom}")
-        print(f"Symlinked {BANK_DIR} -> {custom}")
-    else:
-        os.makedirs(BANK_DIR, exist_ok=True)
-        print(f"Created {BANK_DIR}")
-
-    ensure_bank()
+    To adopt an existing store (iCloud/Drive/Dropbox/prior install), use
+    `link --path <dir>` instead. The skill decides which to call after asking
+    the user — see SKILL.md "locate the stateful stores".
+    """
+    if os.path.exists(COMPLAINTS_PATH):
+        print(f"Already initialized at {os.path.realpath(COMPLAINTS_PATH)}.")
+        return
+    STORE.write_empty()
     print(f"Initialized empty complaint bank at {os.path.realpath(COMPLAINTS_PATH)}")
 
 
 def read_bank():
-    ensure_bank()
+    STORE.ensure_ready()
     with open(COMPLAINTS_PATH, "r") as f:
         return f.read()
 
 
 def write_bank(content):
-    ensure_bank()
+    STORE.ensure_ready()
     with open(COMPLAINTS_PATH, "w") as f:
         f.write(content)
 
@@ -415,7 +388,12 @@ if __name__ == "__main__":
     )
     sub = parser.add_subparsers(dest="command")
 
-    sub.add_parser("init", help="Set up complaint bank storage")
+    sub.add_parser("init", help="Create a fresh empty complaint bank at the default location")
+
+    sub.add_parser("status", help="Report store state: present | empty | missing")
+
+    lk = sub.add_parser("link", help="Symlink the default location to an existing complaint bank")
+    lk.add_argument("--path", required=True, help="Full path to the existing complaint bank directory")
 
     fl = sub.add_parser("file", help="File a new complaint")
     fl.add_argument("--airline", required=True, help="Airline code (e.g. DL, AA, UA)")
@@ -452,6 +430,8 @@ if __name__ == "__main__":
 
     {
         "init": cmd_init,
+        "status": cmd_status,
+        "link": cmd_link,
         "file": cmd_file,
         "check": cmd_check,
         "resolve": cmd_resolve,
