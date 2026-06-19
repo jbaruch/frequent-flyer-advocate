@@ -8,7 +8,8 @@ Supports multiple passengers and airlines — the primary use is Baruch + Alice 
 but credits for kids or on non-Delta airlines are tracked too so nothing expires forgotten.
 
 Usage:
-  python3 credits-tracker.py init
+  python3 credits-tracker.py init [--default | --path DIR]   # set up new storage
+  python3 credits-tracker.py link --path DIR                  # link an existing inventory
   python3 credits-tracker.py list [--type TYPE] [--passenger NAME] [--airline CODE] [--verbose]
   python3 credits-tracker.py add --type TYPE --description DESC --value VALUE --passenger NAME [--expiry YYYY-MM-DD] [--airline CODE] [--restrictions TEXT] [--confirmation CODE]
   python3 credits-tracker.py use --id ID [--note TEXT]
@@ -118,22 +119,201 @@ Track all active credits here. Use `credits-tracker.py` for all updates — do n
 """
 
 
-def ensure_inventory():
-    """Create the inventory file and directory if they don't exist.
+def require_initialized():
+    """Fail loudly if the store hasn't been set up yet — never silently auto-create.
 
-    If CREDITS_DIR is a symlink, follow it (user chose a custom location via `init`).
-    Otherwise create the default directory.
+    On a machine where the inventory lives in cloud storage (Google Drive/Dropbox/iCloud)
+    and just hasn't been linked yet, silently creating an empty default store would fork
+    the shared data into two diverging copies. The skill's bootstrap must run `init` or
+    `link` first.
+    """
+    # isdir() follows symlinks, so a symlink to a real directory passes; a dangling
+    # symlink, a symlink to a non-directory, and a plain file all fall through to a
+    # specific error instead of being mistaken for an initialized store.
+    if os.path.isdir(CREDITS_DIR):
+        return
+    if os.path.islink(CREDITS_DIR):
+        target = os.readlink(CREDITS_DIR)
+        print(
+            f"ERROR: {CREDITS_DIR} is a symlink to '{target}', but that target is missing "
+            f"or is not a directory.\n"
+            f"Re-link to the real location:  credits-tracker.py link --path <existing-dir>",
+            file=sys.stderr,
+        )
+    elif os.path.exists(CREDITS_DIR):
+        print(
+            f"ERROR: {CREDITS_DIR} exists but is not a directory. Remove it (or move it "
+            f"aside) and re-run init/link.",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            f"ERROR: credits store not initialized at {CREDITS_DIR}.\n"
+            f"  Already have an inventory (e.g. in Google Drive/Dropbox/iCloud)? Link it:\n"
+            f"      credits-tracker.py link --path <existing-dir>\n"
+            f"  Start a fresh one:\n"
+            f"      credits-tracker.py init --default       # store at ~/.claude/travel-credits\n"
+            f"      credits-tracker.py init --path <dir>    # store elsewhere, symlinked back",
+            file=sys.stderr,
+        )
+    sys.exit(2)
+
+
+def ensure_inventory():
+    """Create inventory.md inside the (already-initialized) store if it's missing.
+
+    Assumes require_initialized() has passed — CREDITS_DIR exists (possibly via symlink).
+    Does NOT overwrite an existing inventory, so linking to a populated store is safe.
     """
     if not os.path.exists(INVENTORY_PATH):
-        # Resolve symlinks — if CREDITS_DIR is a symlink, the real dir must exist
         real_dir = os.path.realpath(CREDITS_DIR)
         os.makedirs(real_dir, exist_ok=True)
         with open(INVENTORY_PATH, "w") as f:
             f.write(EMPTY_INVENTORY)
 
 
-def cmd_init(_args):
-    """Interactive setup: choose default or custom storage location."""
+def _refuse_unusable_store_path():
+    """Before creating a fresh store, refuse if something unusable already sits at CREDITS_DIR.
+
+    Callers check os.path.isdir() first, so reaching here means the path is not a usable
+    store. A dangling symlink usually means the real (cloud) store is unmounted — refuse
+    rather than orphan it. A plain file (or symlink to a non-directory) would otherwise make
+    os.makedirs raise an opaque FileExistsError — refuse with an actionable message instead.
+    """
+    if os.path.islink(CREDITS_DIR) and not os.path.exists(CREDITS_DIR):
+        target = os.readlink(CREDITS_DIR)
+        print(
+            f"ERROR: {CREDITS_DIR} is a symlink to '{target}', but that target is missing.\n"
+            f"  The cloud folder may be unmounted — remount it, or re-link with:\n"
+            f"      credits-tracker.py link --path <existing-dir>\n"
+            f"  To deliberately start fresh, remove the symlink first: rm {CREDITS_DIR}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    if os.path.exists(CREDITS_DIR):  # exists but not a directory (callers already checked isdir)
+        print(
+            f"ERROR: {CREDITS_DIR} exists but is not a directory. Remove it (or move it "
+            f"aside) before creating a store here.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+
+def _init_default():
+    """Create a fresh empty store at the default ~/.claude location."""
+    if os.path.isdir(CREDITS_DIR):
+        print(f"Already initialized. Storage: {os.path.realpath(CREDITS_DIR)}")
+        return
+    _refuse_unusable_store_path()
+    os.makedirs(CREDITS_DIR, exist_ok=True)
+    ensure_inventory()
+    print(f"✅ Initialized empty inventory at {INVENTORY_PATH}")
+
+
+def _init_custom(custom):
+    """Create a fresh store at a custom path and symlink CREDITS_DIR to it."""
+    if not custom:
+        print("ERROR: No path provided.", file=sys.stderr)
+        sys.exit(1)
+    # Resolve to an absolute path: a relative symlink target resolves against ~/.claude
+    # (the symlink's own directory), not the user's cwd — almost never what they meant.
+    custom = os.path.abspath(os.path.expanduser(custom))
+    if os.path.exists(CREDITS_DIR):
+        print(
+            f"ERROR: {CREDITS_DIR} already exists (real path {os.path.realpath(CREDITS_DIR)}).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    _refuse_unusable_store_path()
+    dir_existed = os.path.isdir(custom)
+    os.makedirs(custom, exist_ok=True)
+    parent = os.path.dirname(CREDITS_DIR)
+    os.makedirs(parent, exist_ok=True)
+    os.symlink(custom, CREDITS_DIR)
+    inventory_existed = os.path.exists(INVENTORY_PATH)
+    ensure_inventory()
+    print(f"✅ {'Using existing directory' if dir_existed else 'Created'} {custom}")
+    print(f"✅ Symlinked {CREDITS_DIR} → {custom}")
+    if inventory_existed:
+        print(f"   Found existing inventory at {os.path.realpath(INVENTORY_PATH)}")
+    else:
+        print(f"✅ Initialized empty inventory at {os.path.realpath(INVENTORY_PATH)}")
+
+
+def _link(target):
+    """Symlink CREDITS_DIR to an existing inventory directory (shared/cloud-synced)."""
+    if not target:
+        print("ERROR: No path provided.", file=sys.stderr)
+        sys.exit(1)
+    target = os.path.abspath(os.path.expanduser(target))
+    if not os.path.isdir(target):
+        print(
+            f"ERROR: '{target}' is not a directory. Point --path at the existing "
+            f"travel-credits folder.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if os.path.exists(CREDITS_DIR):
+        # Compare canonical paths so /tmp vs /private/tmp (macOS) reads as already-linked.
+        if os.path.realpath(CREDITS_DIR) == os.path.realpath(target):
+            print(f"Already linked: {CREDITS_DIR} → {target}")
+            return
+        print(
+            f"ERROR: {CREDITS_DIR} already exists (real path {os.path.realpath(CREDITS_DIR)}).\n"
+            f"Move or remove it first if you really want to re-link.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if os.path.islink(CREDITS_DIR):  # dangling symlink — safe to replace
+        os.unlink(CREDITS_DIR)
+    parent = os.path.dirname(CREDITS_DIR)
+    os.makedirs(parent, exist_ok=True)
+    os.symlink(target, CREDITS_DIR)
+    print(f"✅ Linked {CREDITS_DIR} → {target}")
+    if os.path.exists(INVENTORY_PATH):
+        with open(INVENTORY_PATH, "r") as f:
+            active = len(parse_credits(f.read(), "active"))
+        print(f"   Found existing inventory ({active} active credit(s)).")
+    else:
+        ensure_inventory()
+        print("   No inventory.md in target — created an empty one.")
+
+
+def cmd_status(_args):
+    """Report store readiness so the skill's bootstrap doesn't reimplement the contract.
+
+    Single source of truth for "is the store usable?": prints one of `ready` / `missing` /
+    `invalid: <reason>` and exits 0 (ready), 3 (missing), or 4 (invalid). Mirrors the
+    isdir-based contract that require_initialized() enforces.
+    """
+    if os.path.isdir(CREDITS_DIR):
+        print(f"ready: {os.path.realpath(CREDITS_DIR)}")
+        sys.exit(0)
+    if os.path.islink(CREDITS_DIR):
+        print(f"invalid: dangling symlink → {os.readlink(CREDITS_DIR)} "
+              f"(cloud folder unmounted? re-link or remove it)")
+        sys.exit(4)
+    if os.path.exists(CREDITS_DIR):
+        print(f"invalid: {CREDITS_DIR} exists but is not a directory")
+        sys.exit(4)
+    print("missing")
+    sys.exit(3)
+
+
+def cmd_link(args):
+    """Link to an existing inventory directory (non-interactive)."""
+    _link(args.path)
+
+
+def cmd_init(args):
+    """Set up storage. Non-interactive with --default/--path; otherwise interactive."""
+    if getattr(args, "default", False):
+        _init_default()
+        return
+    if getattr(args, "path", None):
+        _init_custom(os.path.expanduser(args.path))
+        return
+
     if os.path.exists(CREDITS_DIR):
         real_path = os.path.realpath(CREDITS_DIR)
         is_symlink = os.path.islink(CREDITS_DIR)
@@ -144,65 +324,49 @@ def cmd_init(_args):
 
         has_credits = False
         if os.path.exists(INVENTORY_PATH):
-            content = read_inventory()
-            has_credits = bool(parse_credits(content, "active"))
+            with open(INVENTORY_PATH, "r") as f:
+                has_credits = bool(parse_credits(f.read(), "active"))
 
         if has_credits:
-            print(f"Inventory has active credits. To change location, move the data manually.")
+            print("Inventory has active credits. To change location, move the data manually.")
             return
+        response = input("No active credits. Reinitialize with a different location? [y/N] ").strip().lower()
+        if response != "y":
+            return
+        if is_symlink:
+            os.unlink(CREDITS_DIR)
         else:
-            response = input("No active credits. Reinitialize with a different location? [y/N] ").strip().lower()
-            if response != "y":
-                return
-            # Clean up existing
-            if is_symlink:
-                os.unlink(CREDITS_DIR)
-            else:
-                import shutil
-                shutil.rmtree(CREDITS_DIR)
+            import shutil
+            shutil.rmtree(CREDITS_DIR)
 
     print()
-    print("Where should the credits inventory be stored?")
+    print("Where should the credits inventory live?")
     print()
-    print(f"  1. Default: {CREDITS_DIR}")
-    print("  2. Custom path (e.g. Google Drive, Dropbox, iCloud)")
+    print(f"  1. Default — new store at {CREDITS_DIR}")
+    print("  2. Link an existing inventory you already have (Google Drive / Dropbox / iCloud)")
+    print("  3. New store at a custom path (symlinked back to ~/.claude)")
     print()
-    choice = input("Choice [1/2]: ").strip()
+    choice = input("Choice [1/2/3]: ").strip()
 
     if choice == "2":
-        custom = input("Enter full path to credits directory: ").strip()
-        custom = os.path.expanduser(custom)
-
-        if not custom:
-            print("ERROR: No path provided.", file=sys.stderr)
-            sys.exit(1)
-
-        # Create the custom directory
-        os.makedirs(custom, exist_ok=True)
-
-        # Create symlink from CREDITS_DIR -> custom
-        parent = os.path.dirname(CREDITS_DIR)
-        os.makedirs(parent, exist_ok=True)
-        os.symlink(custom, CREDITS_DIR)
-
-        print(f"✅ Created {custom}")
-        print(f"✅ Symlinked {CREDITS_DIR} → {custom}")
+        existing = input("Path to your existing travel-credits directory: ").strip()
+        _link(os.path.expanduser(existing))
+    elif choice == "3":
+        custom = input("Path for the new store: ").strip()
+        _init_custom(os.path.expanduser(custom))
     else:
-        os.makedirs(CREDITS_DIR, exist_ok=True)
-        print(f"✅ Created {CREDITS_DIR}")
-
-    # Create empty inventory
-    ensure_inventory()
-    print(f"✅ Initialized empty inventory at {os.path.realpath(INVENTORY_PATH)}")
+        _init_default()
 
 
 def read_inventory():
+    require_initialized()
     ensure_inventory()
     with open(INVENTORY_PATH, "r") as f:
         return f.read()
 
 
 def write_inventory(content):
+    require_initialized()
     ensure_inventory()
     with open(INVENTORY_PATH, "w") as f:
         f.write(content)
@@ -782,7 +946,17 @@ Examples:
     sm.add_argument("--passenger", help="Filter by passenger name (substring match)")
 
     # init
-    sub.add_parser("init", help="Set up credits storage (default or custom location like Google Drive)")
+    init = sub.add_parser("init", help="Set up credits storage (default or custom location like Google Drive)")
+    init_mode = init.add_mutually_exclusive_group()
+    init_mode.add_argument("--default", action="store_true", help="Non-interactive: create a fresh store at ~/.claude/travel-credits")
+    init_mode.add_argument("--path", help="Non-interactive: create a fresh store at this path, symlinked back to ~/.claude")
+
+    # link
+    lnk = sub.add_parser("link", help="Link ~/.claude/travel-credits to an existing inventory directory (e.g. cloud-synced)")
+    lnk.add_argument("--path", required=True, help="Path to the existing travel-credits directory")
+
+    # status
+    sub.add_parser("status", help="Report store readiness: ready (0) / missing (3) / invalid (4)")
 
     args = parser.parse_args()
     if not args.command:
@@ -797,4 +971,6 @@ Examples:
         "check": cmd_check,
         "summary": cmd_summary,
         "init": cmd_init,
+        "link": cmd_link,
+        "status": cmd_status,
     }[args.command](args)

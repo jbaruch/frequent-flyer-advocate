@@ -5,7 +5,8 @@ Storage at ~/.claude/complaint-bank/ so any skill can access it.
 Run `init` first to set up storage (default or custom location like Google Drive).
 
 Usage:
-  python3 complaints-bank.py init
+  python3 complaints-bank.py init [--default | --path DIR]   # set up new storage
+  python3 complaints-bank.py link --path DIR                  # link an existing bank
   python3 complaints-bank.py file --airline CODE --flight FLNUM --flight-date YYYY-MM-DD --route ORIG-DEST --passenger NAME --category CAT --severity SEV --summary "..." --outcome "..."
   python3 complaints-bank.py check --airline CODE [--passenger NAME] [--route ROUTE]
   python3 complaints-bank.py resolve --id ID --resolution STATUS [--note TEXT]
@@ -52,7 +53,51 @@ Filed complaints for pattern tracking. Use `complaints-bank.py` for all updates.
 """
 
 
+def require_initialized():
+    """Fail loudly if the bank hasn't been set up yet — never silently auto-create.
+
+    On a machine where the complaint bank lives in cloud storage and just hasn't been
+    linked yet, silently creating an empty default store would fork the shared data into
+    two diverging copies. The skill's bootstrap must run `init` or `link` first.
+    """
+    # isdir() follows symlinks, so a symlink to a real directory passes; a dangling
+    # symlink, a symlink to a non-directory, and a plain file all fall through to a
+    # specific error instead of being mistaken for an initialized bank.
+    if os.path.isdir(BANK_DIR):
+        return
+    if os.path.islink(BANK_DIR):
+        target = os.readlink(BANK_DIR)
+        print(
+            f"ERROR: {BANK_DIR} is a symlink to '{target}', but that target is missing "
+            f"or is not a directory.\n"
+            f"Re-link to the real location:  complaints-bank.py link --path <existing-dir>",
+            file=sys.stderr,
+        )
+    elif os.path.exists(BANK_DIR):
+        print(
+            f"ERROR: {BANK_DIR} exists but is not a directory. Remove it (or move it "
+            f"aside) and re-run init/link.",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            f"ERROR: complaint bank not initialized at {BANK_DIR}.\n"
+            f"  Already have a bank (e.g. in Google Drive/Dropbox/iCloud)? Link it:\n"
+            f"      complaints-bank.py link --path <existing-dir>\n"
+            f"  Start a fresh one:\n"
+            f"      complaints-bank.py init --default       # store at ~/.claude/complaint-bank\n"
+            f"      complaints-bank.py init --path <dir>    # store elsewhere, symlinked back",
+            file=sys.stderr,
+        )
+    sys.exit(2)
+
+
 def ensure_bank():
+    """Create complaints.md inside the (already-initialized) bank if it's missing.
+
+    Assumes require_initialized() has passed — BANK_DIR exists (possibly via symlink).
+    Does NOT overwrite an existing bank, so linking to a populated store is safe.
+    """
     if not os.path.exists(COMPLAINTS_PATH):
         real_dir = os.path.realpath(BANK_DIR)
         os.makedirs(real_dir, exist_ok=True)
@@ -60,7 +105,148 @@ def ensure_bank():
             f.write(EMPTY_BANK)
 
 
-def cmd_init(_args):
+def _refuse_unusable_store_path():
+    """Before creating a fresh bank, refuse if something unusable already sits at BANK_DIR.
+
+    Callers check os.path.isdir() first, so reaching here means the path is not a usable
+    bank. A dangling symlink usually means the real (cloud) bank is unmounted — refuse
+    rather than orphan it. A plain file (or symlink to a non-directory) would otherwise make
+    os.makedirs raise an opaque FileExistsError — refuse with an actionable message instead.
+    """
+    if os.path.islink(BANK_DIR) and not os.path.exists(BANK_DIR):
+        target = os.readlink(BANK_DIR)
+        print(
+            f"ERROR: {BANK_DIR} is a symlink to '{target}', but that target is missing.\n"
+            f"  The cloud folder may be unmounted — remount it, or re-link with:\n"
+            f"      complaints-bank.py link --path <existing-dir>\n"
+            f"  To deliberately start fresh, remove the symlink first: rm {BANK_DIR}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    if os.path.exists(BANK_DIR):  # exists but not a directory (callers already checked isdir)
+        print(
+            f"ERROR: {BANK_DIR} exists but is not a directory. Remove it (or move it "
+            f"aside) before creating a bank here.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+
+def _init_default():
+    """Create a fresh empty bank at the default ~/.claude location."""
+    if os.path.isdir(BANK_DIR):
+        print(f"Already initialized. Storage: {os.path.realpath(BANK_DIR)}")
+        return
+    _refuse_unusable_store_path()
+    os.makedirs(BANK_DIR, exist_ok=True)
+    ensure_bank()
+    print(f"Initialized empty complaint bank at {COMPLAINTS_PATH}")
+
+
+def _init_custom(custom):
+    """Create a fresh bank at a custom path and symlink BANK_DIR to it."""
+    if not custom:
+        print("ERROR: No path provided.", file=sys.stderr)
+        sys.exit(1)
+    # Resolve to an absolute path: a relative symlink target resolves against ~/.claude
+    # (the symlink's own directory), not the user's cwd — almost never what they meant.
+    custom = os.path.abspath(os.path.expanduser(custom))
+    if os.path.exists(BANK_DIR):
+        print(
+            f"ERROR: {BANK_DIR} already exists (real path {os.path.realpath(BANK_DIR)}).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    _refuse_unusable_store_path()
+    dir_existed = os.path.isdir(custom)
+    os.makedirs(custom, exist_ok=True)
+    parent = os.path.dirname(BANK_DIR)
+    os.makedirs(parent, exist_ok=True)
+    os.symlink(custom, BANK_DIR)
+    bank_existed = os.path.exists(COMPLAINTS_PATH)
+    ensure_bank()
+    print(f"{'Using existing directory' if dir_existed else 'Created'} {custom}")
+    print(f"Symlinked {BANK_DIR} -> {custom}")
+    if bank_existed:
+        print(f"Found existing complaint bank at {os.path.realpath(COMPLAINTS_PATH)}")
+    else:
+        print(f"Initialized empty complaint bank at {os.path.realpath(COMPLAINTS_PATH)}")
+
+
+def _link(target):
+    """Symlink BANK_DIR to an existing complaint-bank directory (shared/cloud-synced)."""
+    if not target:
+        print("ERROR: No path provided.", file=sys.stderr)
+        sys.exit(1)
+    target = os.path.abspath(os.path.expanduser(target))
+    if not os.path.isdir(target):
+        print(
+            f"ERROR: '{target}' is not a directory. Point --path at the existing "
+            f"complaint-bank folder.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if os.path.exists(BANK_DIR):
+        # Compare canonical paths so /tmp vs /private/tmp (macOS) reads as already-linked.
+        if os.path.realpath(BANK_DIR) == os.path.realpath(target):
+            print(f"Already linked: {BANK_DIR} -> {target}")
+            return
+        print(
+            f"ERROR: {BANK_DIR} already exists (real path {os.path.realpath(BANK_DIR)}).\n"
+            f"Move or remove it first if you really want to re-link.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if os.path.islink(BANK_DIR):  # dangling symlink — safe to replace
+        os.unlink(BANK_DIR)
+    parent = os.path.dirname(BANK_DIR)
+    os.makedirs(parent, exist_ok=True)
+    os.symlink(target, BANK_DIR)
+    print(f"Linked {BANK_DIR} -> {target}")
+    if os.path.exists(COMPLAINTS_PATH):
+        with open(COMPLAINTS_PATH, "r") as f:
+            filed = len(parse_complaints(f.read()))
+        print(f"   Found existing bank ({filed} filed complaint(s)).")
+    else:
+        ensure_bank()
+        print("   No complaints.md in target — created an empty one.")
+
+
+def cmd_status(_args):
+    """Report bank readiness so the skill's bootstrap doesn't reimplement the contract.
+
+    Single source of truth for "is the bank usable?": prints one of `ready` / `missing` /
+    `invalid: <reason>` and exits 0 (ready), 3 (missing), or 4 (invalid). Mirrors the
+    isdir-based contract that require_initialized() enforces.
+    """
+    if os.path.isdir(BANK_DIR):
+        print(f"ready: {os.path.realpath(BANK_DIR)}")
+        sys.exit(0)
+    if os.path.islink(BANK_DIR):
+        print(f"invalid: dangling symlink -> {os.readlink(BANK_DIR)} "
+              f"(cloud folder unmounted? re-link or remove it)")
+        sys.exit(4)
+    if os.path.exists(BANK_DIR):
+        print(f"invalid: {BANK_DIR} exists but is not a directory")
+        sys.exit(4)
+    print("missing")
+    sys.exit(3)
+
+
+def cmd_link(args):
+    """Link to an existing complaint-bank directory (non-interactive)."""
+    _link(args.path)
+
+
+def cmd_init(args):
+    """Set up storage. Non-interactive with --default/--path; otherwise interactive."""
+    if getattr(args, "default", False):
+        _init_default()
+        return
+    if getattr(args, "path", None):
+        _init_custom(os.path.expanduser(args.path))
+        return
+
     if os.path.exists(BANK_DIR):
         real_path = os.path.realpath(BANK_DIR)
         is_symlink = os.path.islink(BANK_DIR)
@@ -71,57 +257,49 @@ def cmd_init(_args):
 
         has_complaints = False
         if os.path.exists(COMPLAINTS_PATH):
-            content = read_bank()
-            has_complaints = bool(parse_complaints(content))
+            with open(COMPLAINTS_PATH, "r") as f:
+                has_complaints = bool(parse_complaints(f.read()))
 
         if has_complaints:
             print("Bank has filed complaints. To change location, move the data manually.")
             return
+        response = input("No complaints filed. Reinitialize with a different location? [y/N] ").strip().lower()
+        if response != "y":
+            return
+        if is_symlink:
+            os.unlink(BANK_DIR)
         else:
-            response = input("No complaints filed. Reinitialize with a different location? [y/N] ").strip().lower()
-            if response != "y":
-                return
-            if is_symlink:
-                os.unlink(BANK_DIR)
-            else:
-                import shutil
-                shutil.rmtree(BANK_DIR)
+            import shutil
+            shutil.rmtree(BANK_DIR)
 
     print()
-    print("Where should the complaint bank be stored?")
+    print("Where should the complaint bank live?")
     print()
-    print(f"  1. Default: {BANK_DIR}")
-    print("  2. Custom path (e.g. Google Drive, Dropbox, iCloud)")
+    print(f"  1. Default — new bank at {BANK_DIR}")
+    print("  2. Link an existing bank you already have (Google Drive / Dropbox / iCloud)")
+    print("  3. New bank at a custom path (symlinked back to ~/.claude)")
     print()
-    choice = input("Choice [1/2]: ").strip()
+    choice = input("Choice [1/2/3]: ").strip()
 
     if choice == "2":
-        custom = input("Enter full path to complaint bank directory: ").strip()
-        custom = os.path.expanduser(custom)
-        if not custom:
-            print("ERROR: No path provided.", file=sys.stderr)
-            sys.exit(1)
-        os.makedirs(custom, exist_ok=True)
-        parent = os.path.dirname(BANK_DIR)
-        os.makedirs(parent, exist_ok=True)
-        os.symlink(custom, BANK_DIR)
-        print(f"Created {custom}")
-        print(f"Symlinked {BANK_DIR} -> {custom}")
+        existing = input("Path to your existing complaint-bank directory: ").strip()
+        _link(os.path.expanduser(existing))
+    elif choice == "3":
+        custom = input("Path for the new bank: ").strip()
+        _init_custom(os.path.expanduser(custom))
     else:
-        os.makedirs(BANK_DIR, exist_ok=True)
-        print(f"Created {BANK_DIR}")
-
-    ensure_bank()
-    print(f"Initialized empty complaint bank at {os.path.realpath(COMPLAINTS_PATH)}")
+        _init_default()
 
 
 def read_bank():
+    require_initialized()
     ensure_bank()
     with open(COMPLAINTS_PATH, "r") as f:
         return f.read()
 
 
 def write_bank(content):
+    require_initialized()
     ensure_bank()
     with open(COMPLAINTS_PATH, "w") as f:
         f.write(content)
@@ -415,7 +593,15 @@ if __name__ == "__main__":
     )
     sub = parser.add_subparsers(dest="command")
 
-    sub.add_parser("init", help="Set up complaint bank storage")
+    init = sub.add_parser("init", help="Set up complaint bank storage")
+    init_mode = init.add_mutually_exclusive_group()
+    init_mode.add_argument("--default", action="store_true", help="Non-interactive: create a fresh bank at ~/.claude/complaint-bank")
+    init_mode.add_argument("--path", help="Non-interactive: create a fresh bank at this path, symlinked back to ~/.claude")
+
+    lnk = sub.add_parser("link", help="Link ~/.claude/complaint-bank to an existing bank directory (e.g. cloud-synced)")
+    lnk.add_argument("--path", required=True, help="Path to the existing complaint-bank directory")
+
+    sub.add_parser("status", help="Report bank readiness: ready (0) / missing (3) / invalid (4)")
 
     fl = sub.add_parser("file", help="File a new complaint")
     fl.add_argument("--airline", required=True, help="Airline code (e.g. DL, AA, UA)")
@@ -452,6 +638,8 @@ if __name__ == "__main__":
 
     {
         "init": cmd_init,
+        "link": cmd_link,
+        "status": cmd_status,
         "file": cmd_file,
         "check": cmd_check,
         "resolve": cmd_resolve,
