@@ -26,18 +26,21 @@ grounded in the airline's own published policies, vision statements, and federal
 
 ---
 
-## Phase 0: Storage bootstrap (first run on this machine)
+## Storage Bootstrap (first run on this machine)
 
-Both data stores live under `~/.claude/` so every skill shares one copy:
+This is a one-time setup precondition for the workflow phases below, not a workflow phase
+itself. Both data stores live under `~/.claude/` so every skill shares one copy:
 
 - **Travel credits** — `~/.claude/travel-credits/` (shared with `jbaruch/travel-policy` — the
   two skills MUST point at the same directory)
 - **Complaint bank** — `~/.claude/complaint-bank/`
 
-The scripts will **refuse to run** (and never silently create an empty store) if their
-directory doesn't exist. This is deliberate: if you keep the inventory in cloud storage
-(Google Drive/Dropbox/iCloud) and it just isn't linked on this machine yet, auto-creating
-an empty one would fork your data into two diverging copies.
+The scripts **refuse to run** (rather than silently creating an empty store) unless the store
+path exists as a directory — or a symlink to a directory. A missing path, a dangling symlink
+(cloud folder not mounted), or a plain file sitting where the store should be all fail loudly.
+This is deliberate: if you keep the inventory in cloud storage (Google Drive/Dropbox/iCloud)
+and it just isn't linked on this machine yet, auto-creating an empty one would fork your data
+into two diverging copies.
 
 **Before the first `credits-tracker.py` or `complaints-bank.py` call**, check each store and
 bootstrap if missing:
@@ -76,8 +79,8 @@ If a command reports a **dangling symlink** (target missing), the cloud folder i
 
 ### First: check for pending complaints
 
-Make sure **Phase 0: Storage bootstrap** has run — if the complaint bank isn't set up yet,
-the command below will refuse to run and tell you to `init`/`link` first.
+Make sure the **Storage Bootstrap** section above has run — if the complaint bank isn't set
+up yet, the command below will refuse to run and tell you to `init`/`link` first.
 
 Before anything else, run:
 `python3 <this-skill-dir>/scripts/complaints-bank.py pending`

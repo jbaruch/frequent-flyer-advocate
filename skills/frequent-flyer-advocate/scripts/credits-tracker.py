@@ -125,15 +125,25 @@ def require_initialized():
     On a machine where the inventory lives in cloud storage (Google Drive/Dropbox/iCloud)
     and just hasn't been linked yet, silently creating an empty default store would fork
     the shared data into two diverging copies. The skill's bootstrap must run `init` or
-    `link` first. (`os.path.exists` follows symlinks, so a dangling symlink also fails.)
+    `link` first.
     """
-    if os.path.exists(CREDITS_DIR):
+    # isdir() follows symlinks, so a symlink to a real directory passes; a dangling
+    # symlink, a symlink to a non-directory, and a plain file all fall through to a
+    # specific error instead of being mistaken for an initialized store.
+    if os.path.isdir(CREDITS_DIR):
         return
     if os.path.islink(CREDITS_DIR):
         target = os.readlink(CREDITS_DIR)
         print(
-            f"ERROR: {CREDITS_DIR} is a symlink to '{target}', but that target is missing.\n"
+            f"ERROR: {CREDITS_DIR} is a symlink to '{target}', but that target is missing "
+            f"or is not a directory.\n"
             f"Re-link to the real location:  credits-tracker.py link --path <existing-dir>",
+            file=sys.stderr,
+        )
+    elif os.path.exists(CREDITS_DIR):
+        print(
+            f"ERROR: {CREDITS_DIR} exists but is not a directory. Remove it (or move it "
+            f"aside) and re-run init/link.",
             file=sys.stderr,
         )
     else:
@@ -164,9 +174,11 @@ def ensure_inventory():
 
 def _init_default():
     """Create a fresh empty store at the default ~/.claude location."""
-    if os.path.exists(CREDITS_DIR):
+    if os.path.isdir(CREDITS_DIR):
         print(f"Already initialized. Storage: {os.path.realpath(CREDITS_DIR)}")
         return
+    if os.path.islink(CREDITS_DIR):  # dangling symlink from a prior setup — makedirs would raise
+        os.unlink(CREDITS_DIR)
     os.makedirs(CREDITS_DIR, exist_ok=True)
     ensure_inventory()
     print(f"✅ Initialized empty inventory at {INVENTORY_PATH}")
@@ -177,26 +189,37 @@ def _init_custom(custom):
     if not custom:
         print("ERROR: No path provided.", file=sys.stderr)
         sys.exit(1)
+    # Resolve to an absolute path: a relative symlink target resolves against ~/.claude
+    # (the symlink's own directory), not the user's cwd — almost never what they meant.
+    custom = os.path.abspath(os.path.expanduser(custom))
     if os.path.exists(CREDITS_DIR):
         print(
             f"ERROR: {CREDITS_DIR} already exists (real path {os.path.realpath(CREDITS_DIR)}).",
             file=sys.stderr,
         )
         sys.exit(1)
+    dir_existed = os.path.isdir(custom)
     os.makedirs(custom, exist_ok=True)
     parent = os.path.dirname(CREDITS_DIR)
     os.makedirs(parent, exist_ok=True)
     if os.path.islink(CREDITS_DIR):  # clean up a dangling symlink
         os.unlink(CREDITS_DIR)
     os.symlink(custom, CREDITS_DIR)
+    inventory_existed = os.path.exists(INVENTORY_PATH)
     ensure_inventory()
-    print(f"✅ Created {custom}")
+    print(f"✅ {'Using existing directory' if dir_existed else 'Created'} {custom}")
     print(f"✅ Symlinked {CREDITS_DIR} → {custom}")
-    print(f"✅ Initialized empty inventory at {os.path.realpath(INVENTORY_PATH)}")
+    if inventory_existed:
+        print(f"   Found existing inventory at {os.path.realpath(INVENTORY_PATH)}")
+    else:
+        print(f"✅ Initialized empty inventory at {os.path.realpath(INVENTORY_PATH)}")
 
 
 def _link(target):
     """Symlink CREDITS_DIR to an existing inventory directory (shared/cloud-synced)."""
+    if not target:
+        print("ERROR: No path provided.", file=sys.stderr)
+        sys.exit(1)
     target = os.path.abspath(os.path.expanduser(target))
     if not os.path.isdir(target):
         print(
@@ -878,8 +901,9 @@ Examples:
 
     # init
     init = sub.add_parser("init", help="Set up credits storage (default or custom location like Google Drive)")
-    init.add_argument("--default", action="store_true", help="Non-interactive: create a fresh store at ~/.claude/travel-credits")
-    init.add_argument("--path", help="Non-interactive: create a fresh store at this path, symlinked back to ~/.claude")
+    init_mode = init.add_mutually_exclusive_group()
+    init_mode.add_argument("--default", action="store_true", help="Non-interactive: create a fresh store at ~/.claude/travel-credits")
+    init_mode.add_argument("--path", help="Non-interactive: create a fresh store at this path, symlinked back to ~/.claude")
 
     # link
     lnk = sub.add_parser("link", help="Link ~/.claude/travel-credits to an existing inventory directory (e.g. cloud-synced)")
