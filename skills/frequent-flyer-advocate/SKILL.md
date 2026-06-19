@@ -46,11 +46,17 @@ into two diverging copies.
 bootstrap if missing:
 
 ```bash
-test -e ~/.claude/travel-credits && echo "credits: ready" || echo "credits: MISSING"
-test -e ~/.claude/complaint-bank && echo "bank: ready"    || echo "bank: MISSING"
+# `-d` mirrors the scripts' contract: a directory or a symlink to a directory is ready;
+# a plain file or a dangling symlink is INVALID (the scripts refuse to run on it).
+for s in travel-credits:credits complaint-bank:bank; do
+  path=~/.claude/${s%%:*}; label=${s##*:}
+  if   [ -d "$path" ];                  then echo "$label: ready"
+  elif [ -e "$path" ] || [ -L "$path" ]; then echo "$label: INVALID (not a directory / dangling symlink) — run init/link or remove it"
+  else                                       echo "$label: MISSING"; fi
+done
 ```
 
-For each store reported `MISSING`, ask the user (via `AskUserQuestion`) whether they already
+For each store reported `MISSING` (or `INVALID`), ask the user (via `AskUserQuestion`) whether they already
 have one:
 
 > I don't see a `travel-credits` database on this machine. Do you already have one

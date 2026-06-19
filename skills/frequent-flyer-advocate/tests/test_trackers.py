@@ -11,9 +11,28 @@ Also discoverable by pytest (test_* functions).
 """
 
 import os
+import atexit
+import shutil
 import subprocess
 import sys
 import tempfile
+
+# Track every temp dir we create and remove them on exit, so repeated local/CI runs
+# don't leak directories under the system temp dir.
+_TMPDIRS = []
+
+
+@atexit.register
+def _cleanup_tmpdirs():
+    for d in _TMPDIRS:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def _mktemp(prefix):
+    d = tempfile.mkdtemp(prefix=prefix)
+    _TMPDIRS.append(d)
+    return d
+
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.normpath(os.path.join(HERE, "..", "scripts"))
@@ -40,7 +59,7 @@ def store_path(home, sub):
 
 
 def fresh_home():
-    return tempfile.mkdtemp(prefix="ffa-test-home-")
+    return _mktemp(prefix="ffa-test-home-")
 
 
 # ── require_initialized ───────────────────────────────────────────────────────
@@ -106,7 +125,7 @@ def test_init_default_and_path_are_mutually_exclusive():
 def test_init_path_relative_becomes_absolute_symlink():
     for script, sub, read_cmd in STORES:
         home = fresh_home()
-        workdir = tempfile.mkdtemp(prefix="ffa-test-cwd-")
+        workdir = _mktemp(prefix="ffa-test-cwd-")
         r = run(script, ["init", "--path", "relsub"], home, cwd=workdir)
         assert r.returncode == 0, f"{script}: init --path relsub failed\n{r.stderr}"
         link = store_path(home, sub)
@@ -122,7 +141,7 @@ def test_init_path_relative_becomes_absolute_symlink():
 def test_link_preserves_existing_store_and_is_idempotent():
     script, sub, read_cmd = STORES[0]  # credits-tracker
     home = fresh_home()
-    cloud = tempfile.mkdtemp(prefix="ffa-test-cloud-")
+    cloud = _mktemp(prefix="ffa-test-cloud-")
     # seed a populated store at the cloud location, then unlink the default
     assert run(script, ["init", "--path", cloud], home).returncode == 0
     assert run(script, ["add", "--type", "ECREDIT", "--desc", "Seed", "--value", "200",
