@@ -1,0 +1,21 @@
+# Files excluded from the published Tessl plugin package.
+# The package ships the manifest, skills/, and rules/ — not dev/CI/editor tooling
+# or generated/runtime state.
+
+# CI, editor, and agent tooling
+.github/
+.agents/
+.codex/
+.vscode/
+.claude/
+
+# Tessl workspace state and installed dependencies (generated)
+.tessl/
+
+# Python bytecode (generated)
+__pycache__/
+*.py[cod]
+
+# Repo-local dev config
+.gitignore
+.tesslignore
