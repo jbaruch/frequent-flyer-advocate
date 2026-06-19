@@ -172,13 +172,31 @@ def ensure_inventory():
             f.write(EMPTY_INVENTORY)
 
 
+def _refuse_dangling_symlink():
+    """If CREDITS_DIR is a dangling symlink, fail with guidance instead of clobbering it.
+
+    A dangling symlink usually means the real store lives in a cloud folder that isn't
+    mounted right now. Silently replacing it with a fresh empty store would orphan that
+    data once the folder remounts — so refuse and tell the user how to recover.
+    """
+    if os.path.islink(CREDITS_DIR) and not os.path.exists(CREDITS_DIR):
+        target = os.readlink(CREDITS_DIR)
+        print(
+            f"ERROR: {CREDITS_DIR} is a symlink to '{target}', but that target is missing.\n"
+            f"  The cloud folder may be unmounted — remount it, or re-link with:\n"
+            f"      credits-tracker.py link --path <existing-dir>\n"
+            f"  To deliberately start fresh, remove the symlink first: rm {CREDITS_DIR}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+
 def _init_default():
     """Create a fresh empty store at the default ~/.claude location."""
     if os.path.isdir(CREDITS_DIR):
         print(f"Already initialized. Storage: {os.path.realpath(CREDITS_DIR)}")
         return
-    if os.path.islink(CREDITS_DIR):  # dangling symlink from a prior setup — makedirs would raise
-        os.unlink(CREDITS_DIR)
+    _refuse_dangling_symlink()
     os.makedirs(CREDITS_DIR, exist_ok=True)
     ensure_inventory()
     print(f"✅ Initialized empty inventory at {INVENTORY_PATH}")
@@ -198,12 +216,11 @@ def _init_custom(custom):
             file=sys.stderr,
         )
         sys.exit(1)
+    _refuse_dangling_symlink()
     dir_existed = os.path.isdir(custom)
     os.makedirs(custom, exist_ok=True)
     parent = os.path.dirname(CREDITS_DIR)
     os.makedirs(parent, exist_ok=True)
-    if os.path.islink(CREDITS_DIR):  # clean up a dangling symlink
-        os.unlink(CREDITS_DIR)
     os.symlink(custom, CREDITS_DIR)
     inventory_existed = os.path.exists(INVENTORY_PATH)
     ensure_inventory()

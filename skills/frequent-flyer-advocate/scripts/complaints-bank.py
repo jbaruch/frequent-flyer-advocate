@@ -105,13 +105,31 @@ def ensure_bank():
             f.write(EMPTY_BANK)
 
 
+def _refuse_dangling_symlink():
+    """If BANK_DIR is a dangling symlink, fail with guidance instead of clobbering it.
+
+    A dangling symlink usually means the real bank lives in a cloud folder that isn't
+    mounted right now. Silently replacing it with a fresh empty store would orphan that
+    data once the folder remounts — so refuse and tell the user how to recover.
+    """
+    if os.path.islink(BANK_DIR) and not os.path.exists(BANK_DIR):
+        target = os.readlink(BANK_DIR)
+        print(
+            f"ERROR: {BANK_DIR} is a symlink to '{target}', but that target is missing.\n"
+            f"  The cloud folder may be unmounted — remount it, or re-link with:\n"
+            f"      complaints-bank.py link --path <existing-dir>\n"
+            f"  To deliberately start fresh, remove the symlink first: rm {BANK_DIR}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+
 def _init_default():
     """Create a fresh empty bank at the default ~/.claude location."""
     if os.path.isdir(BANK_DIR):
         print(f"Already initialized. Storage: {os.path.realpath(BANK_DIR)}")
         return
-    if os.path.islink(BANK_DIR):  # dangling symlink from a prior setup — makedirs would raise
-        os.unlink(BANK_DIR)
+    _refuse_dangling_symlink()
     os.makedirs(BANK_DIR, exist_ok=True)
     ensure_bank()
     print(f"Initialized empty complaint bank at {COMPLAINTS_PATH}")
@@ -131,12 +149,11 @@ def _init_custom(custom):
             file=sys.stderr,
         )
         sys.exit(1)
+    _refuse_dangling_symlink()
     dir_existed = os.path.isdir(custom)
     os.makedirs(custom, exist_ok=True)
     parent = os.path.dirname(BANK_DIR)
     os.makedirs(parent, exist_ok=True)
-    if os.path.islink(BANK_DIR):  # clean up a dangling symlink
-        os.unlink(BANK_DIR)
     os.symlink(custom, BANK_DIR)
     bank_existed = os.path.exists(COMPLAINTS_PATH)
     ensure_bank()

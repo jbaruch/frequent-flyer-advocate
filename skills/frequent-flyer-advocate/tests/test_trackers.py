@@ -76,15 +76,18 @@ def test_init_default_creates_usable_store():
         assert r2.returncode == 0, f"{script}: read after init failed\n{r2.stderr}"
 
 
-def test_init_default_recovers_from_dangling_symlink():
+def test_init_default_refuses_dangling_symlink():
+    # A dangling symlink usually means the real (cloud) store is unmounted — init must
+    # NOT clobber it into a fresh empty store; it must fail with recovery guidance.
     for script, sub, read_cmd in STORES:
         home = fresh_home()
         os.makedirs(os.path.join(home, ".claude"))
         os.symlink(os.path.join(home, "gone"), store_path(home, sub))  # dangling
         r = run(script, ["init", "--default"], home)
-        assert r.returncode == 0, f"{script}: init should recover from dangling symlink\n{r.stderr}"
-        assert os.path.isdir(store_path(home, sub)) and not os.path.islink(store_path(home, sub)), \
-            f"{script}: store should be a real dir now"
+        assert r.returncode == 2, f"{script}: init should refuse a dangling symlink\n{r.stderr}"
+        assert "symlink" in r.stderr.lower() and ("re-link" in r.stderr.lower() or "remount" in r.stderr.lower()), \
+            f"{script}: expected recovery guidance, got: {r.stderr}"
+        assert os.path.islink(store_path(home, sub)), f"{script}: dangling symlink must be preserved, not clobbered"
 
 
 # ── mutually exclusive flags ──────────────────────────────────────────────────
