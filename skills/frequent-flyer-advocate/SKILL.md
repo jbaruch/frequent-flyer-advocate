@@ -26,9 +26,58 @@ grounded in the airline's own published policies, vision statements, and federal
 
 ---
 
+## Phase 0: Storage bootstrap (first run on this machine)
+
+Both data stores live under `~/.claude/` so every skill shares one copy:
+
+- **Travel credits** — `~/.claude/travel-credits/` (shared with `jbaruch/travel-policy` — the
+  two skills MUST point at the same directory)
+- **Complaint bank** — `~/.claude/complaint-bank/`
+
+The scripts will **refuse to run** (and never silently create an empty store) if their
+directory doesn't exist. This is deliberate: if you keep the inventory in cloud storage
+(Google Drive/Dropbox/iCloud) and it just isn't linked on this machine yet, auto-creating
+an empty one would fork your data into two diverging copies.
+
+**Before the first `credits-tracker.py` or `complaints-bank.py` call**, check each store and
+bootstrap if missing:
+
+```bash
+test -e ~/.claude/travel-credits && echo "credits: ready" || echo "credits: MISSING"
+test -e ~/.claude/complaint-bank && echo "bank: ready"    || echo "bank: MISSING"
+```
+
+For each store reported `MISSING`, ask the user (via `AskUserQuestion`) whether they already
+have one:
+
+> I don't see a `travel-credits` database on this machine. Do you already have one
+> (e.g. synced in Google Drive / Dropbox / iCloud), or should I start fresh?
+> 1. **Link an existing one** — I'll symlink it into `~/.claude/`
+> 2. **Start a fresh one** at `~/.claude/travel-credits/`
+> 3. **Start a fresh one at a custom path** (e.g. a cloud folder) — I'll symlink it back
+
+Then run the matching command (use the same wording for the complaint bank):
+
+```bash
+# 1. Link an existing database (ask for the path first):
+python3 <this-skill-dir>/scripts/credits-tracker.py link --path "<existing-dir>"
+# 2. Fresh at default:
+python3 <this-skill-dir>/scripts/credits-tracker.py init --default
+# 3. Fresh at custom path:
+python3 <this-skill-dir>/scripts/credits-tracker.py init --path "<dir>"
+```
+
+If a command reports a **dangling symlink** (target missing), the cloud folder isn't mounted
+— tell the user rather than re-creating the store. Once both stores report `ready`, proceed.
+
+---
+
 ## Phase 1: Intake & Intelligent Questioning
 
 ### First: check for pending complaints
+
+Make sure **Phase 0: Storage bootstrap** has run — if the complaint bank isn't set up yet,
+the command below will refuse to run and tell you to `init`/`link` first.
 
 Before anything else, run:
 `python3 <this-skill-dir>/scripts/complaints-bank.py pending`
