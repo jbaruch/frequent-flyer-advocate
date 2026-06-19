@@ -105,12 +105,13 @@ def ensure_bank():
             f.write(EMPTY_BANK)
 
 
-def _refuse_dangling_symlink():
-    """If BANK_DIR is a dangling symlink, fail with guidance instead of clobbering it.
+def _refuse_unusable_store_path():
+    """Before creating a fresh bank, refuse if something unusable already sits at BANK_DIR.
 
-    A dangling symlink usually means the real bank lives in a cloud folder that isn't
-    mounted right now. Silently replacing it with a fresh empty store would orphan that
-    data once the folder remounts — so refuse and tell the user how to recover.
+    Callers check os.path.isdir() first, so reaching here means the path is not a usable
+    bank. A dangling symlink usually means the real (cloud) bank is unmounted — refuse
+    rather than orphan it. A plain file (or symlink to a non-directory) would otherwise make
+    os.makedirs raise an opaque FileExistsError — refuse with an actionable message instead.
     """
     if os.path.islink(BANK_DIR) and not os.path.exists(BANK_DIR):
         target = os.readlink(BANK_DIR)
@@ -122,6 +123,13 @@ def _refuse_dangling_symlink():
             file=sys.stderr,
         )
         sys.exit(2)
+    if os.path.exists(BANK_DIR):  # exists but not a directory (callers already checked isdir)
+        print(
+            f"ERROR: {BANK_DIR} exists but is not a directory. Remove it (or move it "
+            f"aside) before creating a bank here.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
 
 def _init_default():
@@ -129,7 +137,7 @@ def _init_default():
     if os.path.isdir(BANK_DIR):
         print(f"Already initialized. Storage: {os.path.realpath(BANK_DIR)}")
         return
-    _refuse_dangling_symlink()
+    _refuse_unusable_store_path()
     os.makedirs(BANK_DIR, exist_ok=True)
     ensure_bank()
     print(f"Initialized empty complaint bank at {COMPLAINTS_PATH}")
@@ -149,7 +157,7 @@ def _init_custom(custom):
             file=sys.stderr,
         )
         sys.exit(1)
-    _refuse_dangling_symlink()
+    _refuse_unusable_store_path()
     dir_existed = os.path.isdir(custom)
     os.makedirs(custom, exist_ok=True)
     parent = os.path.dirname(BANK_DIR)
@@ -202,6 +210,27 @@ def _link(target):
     else:
         ensure_bank()
         print("   No complaints.md in target — created an empty one.")
+
+
+def cmd_status(_args):
+    """Report bank readiness so the skill's bootstrap doesn't reimplement the contract.
+
+    Single source of truth for "is the bank usable?": prints one of `ready` / `missing` /
+    `invalid: <reason>` and exits 0 (ready), 3 (missing), or 4 (invalid). Mirrors the
+    isdir-based contract that require_initialized() enforces.
+    """
+    if os.path.isdir(BANK_DIR):
+        print(f"ready: {os.path.realpath(BANK_DIR)}")
+        sys.exit(0)
+    if os.path.islink(BANK_DIR):
+        print(f"invalid: dangling symlink -> {os.readlink(BANK_DIR)} "
+              f"(cloud folder unmounted? re-link or remove it)")
+        sys.exit(4)
+    if os.path.exists(BANK_DIR):
+        print(f"invalid: {BANK_DIR} exists but is not a directory")
+        sys.exit(4)
+    print("missing")
+    sys.exit(3)
 
 
 def cmd_link(args):
@@ -572,6 +601,8 @@ if __name__ == "__main__":
     lnk = sub.add_parser("link", help="Link ~/.claude/complaint-bank to an existing bank directory (e.g. cloud-synced)")
     lnk.add_argument("--path", required=True, help="Path to the existing complaint-bank directory")
 
+    sub.add_parser("status", help="Report bank readiness: ready (0) / missing (3) / invalid (4)")
+
     fl = sub.add_parser("file", help="File a new complaint")
     fl.add_argument("--airline", required=True, help="Airline code (e.g. DL, AA, UA)")
     fl.add_argument("--flight", required=True, help="Flight number (e.g. DL1234)")
@@ -608,6 +639,7 @@ if __name__ == "__main__":
     {
         "init": cmd_init,
         "link": cmd_link,
+        "status": cmd_status,
         "file": cmd_file,
         "check": cmd_check,
         "resolve": cmd_resolve,

@@ -165,6 +165,42 @@ def test_link_empty_path_is_rejected():
         assert "no path" in r.stderr.lower(), f"{script}: {r.stderr}"
 
 
+# ── status subcommand + regular-file init guard ───────────────────────────────
+
+def test_status_reports_missing_ready_invalid():
+    for script, sub, read_cmd in STORES:
+        home = fresh_home()
+        # missing
+        r = run(script, ["status"], home)
+        assert r.returncode == 3 and "missing" in r.stdout.lower(), \
+            f"{script}: expected missing/exit3, got {r.returncode}: {r.stdout}{r.stderr}"
+        # ready after init
+        assert run(script, ["init", "--default"], home).returncode == 0
+        r = run(script, ["status"], home)
+        assert r.returncode == 0 and "ready" in r.stdout.lower(), \
+            f"{script}: expected ready/exit0, got {r.returncode}: {r.stdout}"
+        # invalid: a plain file where the store should be
+        home2 = fresh_home()
+        os.makedirs(os.path.join(home2, ".claude"))
+        open(store_path(home2, sub), "w").close()
+        r = run(script, ["status"], home2)
+        assert r.returncode == 4 and "invalid" in r.stdout.lower(), \
+            f"{script}: expected invalid/exit4, got {r.returncode}: {r.stdout}"
+
+
+def test_init_default_refuses_regular_file_without_crashing():
+    # A plain file at the store path must produce an actionable error, not an uncaught
+    # FileExistsError from os.makedirs.
+    for script, sub, read_cmd in STORES:
+        home = fresh_home()
+        os.makedirs(os.path.join(home, ".claude"))
+        open(store_path(home, sub), "w").close()
+        r = run(script, ["init", "--default"], home)
+        assert r.returncode == 2, f"{script}: expected exit 2, got {r.returncode}\n{r.stdout}{r.stderr}"
+        assert "not a directory" in r.stderr.lower(), f"{script}: {r.stderr}"
+        assert "traceback" not in r.stderr.lower(), f"{script}: crashed instead of clean error:\n{r.stderr}"
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

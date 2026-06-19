@@ -46,14 +46,10 @@ into two diverging copies.
 bootstrap if missing:
 
 ```bash
-# `-d` mirrors the scripts' contract: a directory or a symlink to a directory is ready;
-# a plain file or a dangling symlink is INVALID (the scripts refuse to run on it).
-for s in travel-credits:credits complaint-bank:bank; do
-  path=~/.claude/${s%%:*}; label=${s##*:}
-  if   [ -d "$path" ];                  then echo "$label: ready"
-  elif [ -e "$path" ] || [ -L "$path" ]; then echo "$label: INVALID (not a directory / dangling symlink) — run init/link or remove it"
-  else                                       echo "$label: MISSING"; fi
-done
+# Each store's `status` subcommand owns the readiness contract (no shell logic here):
+# prints ready / missing / invalid and exits 0 / 3 / 4 respectively.
+python3 <this-skill-dir>/scripts/credits-tracker.py status
+python3 <this-skill-dir>/scripts/complaints-bank.py status
 ```
 
 For each store reported `MISSING` (or `INVALID`), ask the user (via `AskUserQuestion`) whether they already

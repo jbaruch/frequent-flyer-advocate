@@ -172,12 +172,13 @@ def ensure_inventory():
             f.write(EMPTY_INVENTORY)
 
 
-def _refuse_dangling_symlink():
-    """If CREDITS_DIR is a dangling symlink, fail with guidance instead of clobbering it.
+def _refuse_unusable_store_path():
+    """Before creating a fresh store, refuse if something unusable already sits at CREDITS_DIR.
 
-    A dangling symlink usually means the real store lives in a cloud folder that isn't
-    mounted right now. Silently replacing it with a fresh empty store would orphan that
-    data once the folder remounts — so refuse and tell the user how to recover.
+    Callers check os.path.isdir() first, so reaching here means the path is not a usable
+    store. A dangling symlink usually means the real (cloud) store is unmounted — refuse
+    rather than orphan it. A plain file (or symlink to a non-directory) would otherwise make
+    os.makedirs raise an opaque FileExistsError — refuse with an actionable message instead.
     """
     if os.path.islink(CREDITS_DIR) and not os.path.exists(CREDITS_DIR):
         target = os.readlink(CREDITS_DIR)
@@ -189,6 +190,13 @@ def _refuse_dangling_symlink():
             file=sys.stderr,
         )
         sys.exit(2)
+    if os.path.exists(CREDITS_DIR):  # exists but not a directory (callers already checked isdir)
+        print(
+            f"ERROR: {CREDITS_DIR} exists but is not a directory. Remove it (or move it "
+            f"aside) before creating a store here.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
 
 def _init_default():
@@ -196,7 +204,7 @@ def _init_default():
     if os.path.isdir(CREDITS_DIR):
         print(f"Already initialized. Storage: {os.path.realpath(CREDITS_DIR)}")
         return
-    _refuse_dangling_symlink()
+    _refuse_unusable_store_path()
     os.makedirs(CREDITS_DIR, exist_ok=True)
     ensure_inventory()
     print(f"✅ Initialized empty inventory at {INVENTORY_PATH}")
@@ -216,7 +224,7 @@ def _init_custom(custom):
             file=sys.stderr,
         )
         sys.exit(1)
-    _refuse_dangling_symlink()
+    _refuse_unusable_store_path()
     dir_existed = os.path.isdir(custom)
     os.makedirs(custom, exist_ok=True)
     parent = os.path.dirname(CREDITS_DIR)
@@ -269,6 +277,27 @@ def _link(target):
     else:
         ensure_inventory()
         print("   No inventory.md in target — created an empty one.")
+
+
+def cmd_status(_args):
+    """Report store readiness so the skill's bootstrap doesn't reimplement the contract.
+
+    Single source of truth for "is the store usable?": prints one of `ready` / `missing` /
+    `invalid: <reason>` and exits 0 (ready), 3 (missing), or 4 (invalid). Mirrors the
+    isdir-based contract that require_initialized() enforces.
+    """
+    if os.path.isdir(CREDITS_DIR):
+        print(f"ready: {os.path.realpath(CREDITS_DIR)}")
+        sys.exit(0)
+    if os.path.islink(CREDITS_DIR):
+        print(f"invalid: dangling symlink → {os.readlink(CREDITS_DIR)} "
+              f"(cloud folder unmounted? re-link or remove it)")
+        sys.exit(4)
+    if os.path.exists(CREDITS_DIR):
+        print(f"invalid: {CREDITS_DIR} exists but is not a directory")
+        sys.exit(4)
+    print("missing")
+    sys.exit(3)
 
 
 def cmd_link(args):
@@ -926,6 +955,9 @@ Examples:
     lnk = sub.add_parser("link", help="Link ~/.claude/travel-credits to an existing inventory directory (e.g. cloud-synced)")
     lnk.add_argument("--path", required=True, help="Path to the existing travel-credits directory")
 
+    # status
+    sub.add_parser("status", help="Report store readiness: ready (0) / missing (3) / invalid (4)")
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
@@ -940,4 +972,5 @@ Examples:
         "summary": cmd_summary,
         "init": cmd_init,
         "link": cmd_link,
+        "status": cmd_status,
     }[args.command](args)
