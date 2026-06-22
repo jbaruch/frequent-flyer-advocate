@@ -4,13 +4,14 @@
 
 ### Changed
 
-- `credits-tracker.py` / `complaints-bank.py`: ported six bootstrap-hardening deltas so the shared `credits-tracker.py` reconverges byte-identical with `jbaruch/travel-policy`, with the parallel guards mirrored into `complaints-bank.py`:
+- `credits-tracker.py` / `complaints-bank.py`: ported six bootstrap-hardening deltas from the shared `credits-tracker.py` in `jbaruch/travel-policy`, with the parallel guards mirrored into `complaints-bank.py`:
   - `link` refuses a `--path` dir with no `inventory.md` / `complaints.md` instead of bootstrapping a second, diverging store.
   - `link` / `init --path` reject whitespace-only paths (not just empty) with actionable guidance.
   - `init --path` refuses a plain file, symlink-to-non-dir, or dangling symlink at the target instead of crashing on `os.makedirs`.
   - Interactive `init` refuses an unusable store path (dangling symlink, plain file) rather than clobbering it.
   - `status` distinguishes a dangling symlink from a symlink to an existing non-directory.
   - `status` prints the bare `ready` token on stdout (resolved path moved to stderr) per the machine-readable contract.
+- `credits-tracker.py` / `complaints-bank.py`: `cmd_init()` dispatches the non-interactive custom-path branch on argument presence (`args.path is not None`) instead of truthiness, so `init --path ""` reaches the empty-path diagnostic rather than falling into the interactive branch. This one-line fix makes FFA's `credits-tracker.py` diverge from `jbaruch/travel-policy` by exactly this commit; the same patch must be ported upstream to reconverge the two copies byte-identical.
 
 ## 0.9.9 — 2026-06-19
 
