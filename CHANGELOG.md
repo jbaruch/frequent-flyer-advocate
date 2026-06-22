@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.12 — 2026-06-22
+
+### Fixed
+
+- `credits-tracker.py`: a credit tagged with **both** `--airline` and `--brand` no longer vanishes from airline scenarios in `check`. The 0.9.11 brand gate was mutually exclusive (`if credit_brand: … elif ctype …`), so once a brand was set the airline heuristics never ran and a co-branded credit only matched hotel scenarios. The brand match is now additive, and the airline heuristics are skipped only for a brand-only credit (`if credit_airline or not credit_brand`). Each issuer dimension now matches independently; the no-cross-bleed guarantee for brand-only credits is unchanged (#15).
+- `credits-tracker.py`: `expiring` now renders issuer rows via the shared `_issuer_label()` helper (`Airline: DL`, brand rows show their chain) instead of the `Airline:  (DL)` double-space/redundant-parens form.
+
+### Notes
+
+- This reconverges FFA's `credits-tracker.py` **byte-identical** with the copy in `jbaruch/jbaruch-travel-policy` (v0.7.13, PR #10). The regression was found there while porting the 0.9.11 `--brand` work downstream; this lands the same fix upstream. `sha256(credits-tracker.py)` now matches across both repos.
+
 ## 0.9.11 — 2026-06-22
 
 ### Added
