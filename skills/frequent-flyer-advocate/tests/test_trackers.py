@@ -454,6 +454,134 @@ def test_airline_only_check_unchanged_back_compat():
         f"airline matching must still work unchanged:\n{r.stdout}"
 
 
+# ── complaints-bank hotel store (--store hotel) ───────────────────────────────
+
+_HOTEL_FILE_ARGS = [
+    "--store", "hotel", "file",
+    "--brand", "Hilton", "--property", "Hilton London Angel Islington",
+    "--reservation", "3434402137", "--stay-dates", "2026-05-05/2026-05-08",
+    "--loyalty-status", "Hilton Honors Gold", "--passenger", "Baruch Sadogursky",
+    "--category", "HABITABILITY", "--severity", "MAJOR",
+    "--summary", "No hot water for 2 of 3 nights", "--outcome", "Full stay refund + points",
+]
+
+_AIRLINE_FILE_ARGS = [
+    "file", "--airline", "DL", "--flight", "DL1234", "--flight-date", "2026-01-15",
+    "--route", "BNA-JFK", "--passenger", "Baruch Sadogursky", "--category", "CANCELLATION",
+    "--severity", "MAJOR", "--summary", "Cancelled 2hrs before", "--outcome", "Full refund",
+]
+
+
+def test_hotel_store_file_list_check_resolve_roundtrip():
+    # The whole point of #3: a hotel complaint can be filed, listed, pattern-checked, and
+    # resolved through the same script — the schema the airline-only `file` used to reject.
+    home = fresh_home()
+    assert run(BANK, ["init", "--default"], home).returncode == 0
+    f = run(BANK, _HOTEL_FILE_ARGS, home)
+    assert f.returncode == 0 and "#1" in f.stdout and "HABITABILITY" in f.stdout, \
+        f"hotel file failed:\n{f.stdout}{f.stderr}"
+    lst = run(BANK, ["--store", "hotel", "list"], home)
+    assert lst.returncode == 0 and "Hilton London Angel" in lst.stdout and "HABITABILITY" in lst.stdout, \
+        f"hotel list missing the entry:\n{lst.stdout}"
+    chk = run(BANK, ["--store", "hotel", "check", "--brand", "Hilton", "--passenger", "Baruch"], home)
+    assert chk.returncode == 0 and "HABITABILITY" in chk.stdout, f"hotel check failed:\n{chk.stdout}"
+    rv = run(BANK, ["--store", "hotel", "resolve", "--id", "1", "--resolution", "RESOLVED",
+                    "--note", "2-night refund + 30K Honors points"], home)
+    assert rv.returncode == 0, f"hotel resolve failed:\n{rv.stderr}"
+    chk2 = run(BANK, ["--store", "hotel", "check", "--brand", "Hilton"], home)
+    assert "RESOLVED" in chk2.stdout, f"resolution not reflected:\n{chk2.stdout}"
+
+
+def test_hotel_and_airline_stores_are_independent():
+    # Separate files, independent ID spaces (both start at #1), neither leaks into the other's
+    # list — the back-compat guarantee for the default airline store.
+    home = fresh_home()
+    assert run(BANK, ["init", "--default"], home).returncode == 0
+    a = run(BANK, _AIRLINE_FILE_ARGS, home)
+    h = run(BANK, _HOTEL_FILE_ARGS, home)
+    assert "#1" in a.stdout and "#1" in h.stdout, \
+        f"each store should have its own ID space starting at 1:\n{a.stdout}\n{h.stdout}"
+    air = run(BANK, ["list"], home)  # default store = airline
+    assert "DL1234" in air.stdout, f"airline list should show the airline complaint:\n{air.stdout}"
+    assert "Hilton" not in air.stdout and "HABITABILITY" not in air.stdout, \
+        f"the hotel complaint must not leak into the airline list:\n{air.stdout}"
+    hot = run(BANK, ["--store", "hotel", "list"], home)
+    assert "Hilton" in hot.stdout and "DL1234" not in hot.stdout, \
+        f"the airline complaint must not leak into the hotel list:\n{hot.stdout}"
+
+
+def test_category_vocab_is_store_specific():
+    # Hotel rejects an airline-only category and vice-versa; each store enforces its own vocab.
+    home = fresh_home()
+    assert run(BANK, ["init", "--default"], home).returncode == 0
+    # airline category in the hotel store → rejected
+    bad_hotel = ["--store", "hotel", "file", "--brand", "Hilton", "--property", "P",
+                 "--reservation", "1", "--stay-dates", "2026-05-05/2026-05-06",
+                 "--loyalty-status", "Gold", "--passenger", "B", "--category", "CANCELLATION",
+                 "--severity", "MINOR", "--summary", "s", "--outcome", "o"]
+    r1 = run(BANK, bad_hotel, home)
+    assert r1.returncode == 1 and "invalid category" in r1.stderr.lower(), \
+        f"airline category must be rejected in the hotel store:\n{r1.stderr}"
+    # hotel category in the airline store → rejected
+    bad_airline = ["file", "--airline", "DL", "--flight", "DL1", "--flight-date", "2026-01-15",
+                   "--route", "BNA-JFK", "--passenger", "B", "--category", "HABITABILITY",
+                   "--severity", "MINOR", "--summary", "s", "--outcome", "o"]
+    r2 = run(BANK, bad_airline, home)
+    assert r2.returncode == 1 and "invalid category" in r2.stderr.lower(), \
+        f"hotel category must be rejected in the airline store:\n{r2.stderr}"
+
+
+def test_hotel_file_missing_store_specific_args_is_rejected():
+    # `--store hotel file` with only the shared args must fail with an actionable message
+    # naming the missing hotel-specific flags (argparse can't enforce them — cmd_file does).
+    home = fresh_home()
+    assert run(BANK, ["init", "--default"], home).returncode == 0
+    r = run(BANK, ["--store", "hotel", "file", "--passenger", "B", "--category", "SERVICE",
+                   "--severity", "MINOR", "--summary", "s", "--outcome", "o"], home)
+    assert r.returncode == 1, f"missing hotel args should exit 1, got {r.returncode}\n{r.stdout}{r.stderr}"
+    assert "requires" in r.stderr.lower() and "--brand" in r.stderr, \
+        f"error should name the missing hotel flags:\n{r.stderr}"
+    assert "traceback" not in r.stderr.lower(), f"crashed instead of clean error:\n{r.stderr}"
+
+
+def _bank_file(home, name):
+    return os.path.join(store_path(home, "complaint-bank"), name)
+
+
+def test_link_accepts_hotel_only_bank():
+    # A bank holding only hotel-complaints.md (no airline complaints yet) must still be
+    # linkable — hotel-complaints.md is a valid bank-existence marker too. Before the fix,
+    # `link` errored because it only looked for complaints.md.
+    home = fresh_home()
+    cloud = _mktemp(prefix="ffa-test-cloud-")
+    assert run(BANK, ["init", "--path", cloud], home).returncode == 0
+    assert run(BANK, _HOTEL_FILE_ARGS, home).returncode == 0
+    os.remove(os.path.join(cloud, "complaints.md"))      # make it hotel-only
+    os.unlink(store_path(home, "complaint-bank"))         # simulate a fresh machine: data in cloud
+    r = run(BANK, ["link", "--path", cloud], home)
+    assert r.returncode == 0, f"link to a hotel-only bank should succeed:\n{r.stderr}"
+    lst = run(BANK, ["--store", "hotel", "list"], home)
+    assert "Hilton" in lst.stdout, f"hotel data must survive the link:\n{lst.stdout}"
+
+
+def test_interactive_init_does_not_wipe_hotel_only_bank():
+    # Data-loss guard: a bank with hotel complaints but no airline complaints must read as
+    # POPULATED, so interactive `init` refuses to reinitialize (which would rmtree the dir and
+    # destroy the hotel data). Before the fix, emptiness was judged from complaints.md alone.
+    home = fresh_home()
+    assert run(BANK, ["init", "--default"], home).returncode == 0
+    assert run(BANK, _HOTEL_FILE_ARGS, home).returncode == 0
+    os.remove(_bank_file(home, "complaints.md"))          # hotel-only bank
+    r = run(BANK, ["init"], home, stdin_text="y\n")        # 'y' would confirm a wipe, if offered
+    assert r.returncode == 0, f"{r.stdout}{r.stderr}"
+    assert "has filed complaints" in r.stdout.lower(), \
+        f"a hotel-only bank must read as populated, not offer to reinitialize:\n{r.stdout}"
+    assert os.path.isfile(_bank_file(home, "hotel-complaints.md")), \
+        "hotel data must not be wiped"
+    lst = run(BANK, ["--store", "hotel", "list"], home)
+    assert "Hilton" in lst.stdout, f"hotel data must survive:\n{lst.stdout}"
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0
