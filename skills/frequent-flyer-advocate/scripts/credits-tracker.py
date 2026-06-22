@@ -212,12 +212,27 @@ def _init_default():
 
 def _init_custom(custom):
     """Create a fresh store at a custom path and symlink CREDITS_DIR to it."""
-    if not custom:
-        print("ERROR: No path provided.", file=sys.stderr)
+    if not custom or not custom.strip():
+        print(
+            "ERROR: No path provided. Pass --path <dir> for the new store's location.",
+            file=sys.stderr,
+        )
         sys.exit(1)
     # Resolve to an absolute path: a relative symlink target resolves against ~/.claude
     # (the symlink's own directory), not the user's cwd — almost never what they meant.
     custom = os.path.abspath(os.path.expanduser(custom))
+    if (os.path.islink(custom) or os.path.exists(custom)) and not os.path.isdir(custom):
+        # A plain file, a symlink to a non-directory, or a dangling symlink at the
+        # target would all make os.makedirs(exist_ok=True) raise an opaque
+        # FileExistsError. (exists() is False for a dangling symlink, so islink() is
+        # checked too.) Refuse with an actionable message instead.
+        print(
+            f"ERROR: '{custom}' is not a usable directory (it's a plain file, or a "
+            f"symlink to a missing/non-directory target). Pick a different --path, or "
+            f"remove it first.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     if os.path.exists(CREDITS_DIR):
         print(
             f"ERROR: {CREDITS_DIR} already exists (real path {os.path.realpath(CREDITS_DIR)}).",
@@ -242,14 +257,32 @@ def _init_custom(custom):
 
 def _link(target):
     """Symlink CREDITS_DIR to an existing inventory directory (shared/cloud-synced)."""
-    if not target:
-        print("ERROR: No path provided.", file=sys.stderr)
+    if not target or not target.strip():
+        # Catch empty AND whitespace-only input: abspath('') / abspath('  ') would
+        # otherwise resolve against the cwd and link the store somewhere unintended.
+        print(
+            "ERROR: No path provided. Point --path at the existing travel-credits folder.",
+            file=sys.stderr,
+        )
         sys.exit(1)
     target = os.path.abspath(os.path.expanduser(target))
     if not os.path.isdir(target):
         print(
             f"ERROR: '{target}' is not a directory. Point --path at the existing "
             f"travel-credits folder.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    # `link` attaches to an EXISTING inventory; it must not bootstrap one. Silently
+    # creating inventory.md here would turn a wrong/empty --path into a second,
+    # diverging store — the fork hazard this command exists to avoid. Use `init` for
+    # a fresh store.
+    if not os.path.isfile(os.path.join(target, "inventory.md")):
+        print(
+            f"ERROR: '{target}' has no inventory.md — `link` attaches to an existing "
+            f"inventory, it does not create one.\n"
+            f"  Point --path at the real travel-credits folder, or create a fresh store:\n"
+            f"      credits-tracker.py init --path {target}",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -270,13 +303,11 @@ def _link(target):
     os.makedirs(parent, exist_ok=True)
     os.symlink(target, CREDITS_DIR)
     print(f"✅ Linked {CREDITS_DIR} → {target}")
-    if os.path.exists(INVENTORY_PATH):
-        with open(INVENTORY_PATH, "r") as f:
-            active = len(parse_credits(f.read(), "active"))
-        print(f"   Found existing inventory ({active} active credit(s)).")
-    else:
-        ensure_inventory()
-        print("   No inventory.md in target — created an empty one.")
+    # inventory.md is guaranteed present (checked above), so this reports the real
+    # linked store — it never bootstraps an empty one.
+    with open(INVENTORY_PATH, "r") as f:
+        active = len(parse_credits(f.read(), "active"))
+    print(f"   Found existing inventory ({active} active credit(s)).")
 
 
 def cmd_status(_args):
@@ -287,11 +318,18 @@ def cmd_status(_args):
     isdir-based contract that require_initialized() enforces.
     """
     if os.path.isdir(CREDITS_DIR):
-        print(f"ready: {os.path.realpath(CREDITS_DIR)}")
+        # Exact, bare readiness token (machine-readable contract); the resolved path
+        # goes to stderr so stdout stays a single stable token, like `missing`.
+        print("ready")
+        print(f"  store: {os.path.realpath(CREDITS_DIR)}", file=sys.stderr)
         sys.exit(0)
     if os.path.islink(CREDITS_DIR):
-        print(f"invalid: dangling symlink → {os.readlink(CREDITS_DIR)} "
-              f"(cloud folder unmounted? re-link or remove it)")
+        target = os.readlink(CREDITS_DIR)
+        if not os.path.exists(CREDITS_DIR):
+            print(f"invalid: dangling symlink → {target} "
+                  f"(cloud folder unmounted? re-link or remove it)")
+        else:
+            print(f"invalid: symlink → {target} is not a directory")
         sys.exit(4)
     if os.path.exists(CREDITS_DIR):
         print(f"invalid: {CREDITS_DIR} exists but is not a directory")
@@ -314,7 +352,13 @@ def cmd_init(args):
         _init_custom(os.path.expanduser(args.path))
         return
 
-    if os.path.exists(CREDITS_DIR):
+    # Only a real store (a directory, or a symlink to one) counts as "already
+    # initialized" and is eligible for reinit. An unusable path — dangling symlink,
+    # symlink to a non-directory, or a plain file — is refused, not clobbered, so we
+    # honor the same contract as init --default/--path (and never orphan cloud data).
+    if os.path.islink(CREDITS_DIR) or os.path.exists(CREDITS_DIR):
+        if not os.path.isdir(CREDITS_DIR):
+            _refuse_unusable_store_path()
         real_path = os.path.realpath(CREDITS_DIR)
         is_symlink = os.path.islink(CREDITS_DIR)
         if is_symlink:
@@ -334,7 +378,7 @@ def cmd_init(args):
         if response != "y":
             return
         if is_symlink:
-            os.unlink(CREDITS_DIR)
+            os.unlink(CREDITS_DIR)  # drop the link, leave the target data intact
         else:
             import shutil
             shutil.rmtree(CREDITS_DIR)

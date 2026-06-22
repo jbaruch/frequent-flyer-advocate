@@ -46,11 +46,11 @@ STORES = [
 ]
 
 
-def run(script, args, home, cwd=None):
+def run(script, args, home, cwd=None, stdin_text=None):
     env = dict(os.environ, HOME=home)
     return subprocess.run(
         [sys.executable, script, *args],
-        env=env, cwd=cwd, capture_output=True, text=True,
+        env=env, cwd=cwd, capture_output=True, text=True, input=stdin_text,
     )
 
 
@@ -158,11 +158,30 @@ def test_link_preserves_existing_store_and_is_idempotent():
 
 
 def test_link_empty_path_is_rejected():
+    # Empty AND whitespace-only --path must be refused: abspath('') / abspath('  ') would
+    # otherwise resolve against the cwd and link the store somewhere unintended.
+    for script, sub, read_cmd in STORES:
+        for bad in ["", "   "]:
+            home = fresh_home()
+            r = run(script, ["link", "--path", bad], home)
+            assert r.returncode == 1, f"{script}: link path {bad!r} should exit 1, got {r.returncode}"
+            assert "no path" in r.stderr.lower(), f"{script}: {bad!r}: {r.stderr}"
+            assert not os.path.lexists(store_path(home, sub)), \
+                f"{script}: link path {bad!r} must not create a store"
+
+
+def test_link_to_dir_without_inventory_is_rejected():
+    # `link` attaches to an EXISTING store; pointing it at a dir with no inventory.md /
+    # complaints.md must be refused, not silently bootstrapped into a second diverging store.
     for script, sub, read_cmd in STORES:
         home = fresh_home()
-        r = run(script, ["link", "--path", ""], home)
-        assert r.returncode == 1, f"{script}: empty link path should exit 1, got {r.returncode}"
-        assert "no path" in r.stderr.lower(), f"{script}: {r.stderr}"
+        empty = _mktemp(prefix="ffa-test-empty-")
+        r = run(script, ["link", "--path", empty], home)
+        assert r.returncode == 1, f"{script}: link to dir without marker should exit 1, got {r.returncode}\n{r.stderr}"
+        assert "does not create one" in r.stderr.lower() or "attaches to an existing" in r.stderr.lower(), \
+            f"{script}: expected refuse-to-bootstrap guidance, got: {r.stderr}"
+        assert not os.path.lexists(store_path(home, sub)), \
+            f"{script}: link must not create a store when refusing"
 
 
 # ── status subcommand + regular-file init guard ───────────────────────────────
@@ -174,11 +193,11 @@ def test_status_reports_missing_ready_invalid():
         r = run(script, ["status"], home)
         assert r.returncode == 3 and "missing" in r.stdout.lower(), \
             f"{script}: expected missing/exit3, got {r.returncode}: {r.stdout}{r.stderr}"
-        # ready after init
+        # ready after init — stdout is the exact bare token, resolved path goes to stderr
         assert run(script, ["init", "--default"], home).returncode == 0
         r = run(script, ["status"], home)
-        assert r.returncode == 0 and "ready" in r.stdout.lower(), \
-            f"{script}: expected ready/exit0, got {r.returncode}: {r.stdout}"
+        assert r.returncode == 0 and r.stdout.strip() == "ready", \
+            f"{script}: expected bare 'ready' token/exit0, got {r.returncode}: {r.stdout!r}"
         # invalid: a plain file where the store should be
         home2 = fresh_home()
         os.makedirs(os.path.join(home2, ".claude"))
@@ -199,6 +218,75 @@ def test_init_default_refuses_regular_file_without_crashing():
         assert r.returncode == 2, f"{script}: expected exit 2, got {r.returncode}\n{r.stdout}{r.stderr}"
         assert "not a directory" in r.stderr.lower(), f"{script}: {r.stderr}"
         assert "traceback" not in r.stderr.lower(), f"{script}: crashed instead of clean error:\n{r.stderr}"
+
+
+def test_init_path_refuses_existing_file():
+    # A plain file at the --path target would make os.makedirs(exist_ok=True) raise an
+    # opaque FileExistsError — init must refuse with an actionable message, not crash.
+    for script, sub, read_cmd in STORES:
+        home = fresh_home()
+        target_parent = _mktemp(prefix="ffa-test-target-")
+        filepath = os.path.join(target_parent, "afile")
+        open(filepath, "w").close()
+        r = run(script, ["init", "--path", filepath], home)
+        assert r.returncode == 1, f"{script}: init --path <file> should exit 1, got {r.returncode}\n{r.stderr}"
+        assert "not a usable directory" in r.stderr.lower(), f"{script}: {r.stderr}"
+        assert not os.path.lexists(store_path(home, sub)), f"{script}: no store should be created"
+        assert "traceback" not in r.stderr.lower(), f"{script}: crashed instead of clean error:\n{r.stderr}"
+
+
+def test_init_path_refuses_dangling_symlink_target():
+    # A dangling symlink at the --path target: exists() is False but islink() is True, so
+    # os.makedirs would raise FileExistsError. init must refuse, not crash.
+    for script, sub, read_cmd in STORES:
+        home = fresh_home()
+        target_parent = _mktemp(prefix="ffa-test-target-")
+        dangling = os.path.join(target_parent, "dangling")
+        os.symlink(os.path.join(target_parent, "missing"), dangling)
+        r = run(script, ["init", "--path", dangling], home)
+        assert r.returncode == 1, f"{script}: init --path <dangling> should exit 1, got {r.returncode}\n{r.stderr}"
+        assert "not a usable directory" in r.stderr.lower(), f"{script}: {r.stderr}"
+        assert not os.path.lexists(store_path(home, sub)), f"{script}: no store should be created"
+        assert "traceback" not in r.stderr.lower(), f"{script}: crashed:\n{r.stderr}"
+
+
+def test_interactive_init_over_regular_file_refuses():
+    # Interactive `init` (no --default/--path) must NOT clobber a plain file at the store
+    # path — it routes through the refuse-unusable contract, not os.unlink/shutil.rmtree.
+    for script, sub, read_cmd in STORES:
+        home = fresh_home()
+        os.makedirs(os.path.join(home, ".claude"))
+        open(store_path(home, sub), "w").close()  # plain file where the store should be
+        r = run(script, ["init"], home, stdin_text="y\n")
+        assert r.returncode == 2, \
+            f"{script}: interactive init over a file should exit 2, got {r.returncode}\n{r.stdout}{r.stderr}"
+        assert "not a directory" in r.stderr.lower(), f"{script}: {r.stderr}"
+        assert os.path.isfile(store_path(home, sub)), f"{script}: the plain file must be preserved, not clobbered"
+        assert "traceback" not in r.stderr.lower(), f"{script}: crashed:\n{r.stderr}"
+
+
+def test_status_distinguishes_symlink_to_file_from_dangling():
+    # A symlink to an existing non-directory is NOT dangling — status must say so, and only
+    # call a symlink "dangling" when its target is actually missing.
+    for script, sub, read_cmd in STORES:
+        home = fresh_home()
+        os.makedirs(os.path.join(home, ".claude"))
+        afile = os.path.join(home, "afile")
+        open(afile, "w").close()
+        os.symlink(afile, store_path(home, sub))  # symlink → existing file
+        r = run(script, ["status"], home)
+        assert r.returncode == 4, f"{script}: symlink-to-file status should exit 4, got {r.returncode}\n{r.stdout}"
+        assert "invalid" in r.stdout.lower() and "not a directory" in r.stdout.lower(), \
+            f"{script}: expected 'not a directory', got: {r.stdout}"
+        assert "dangling" not in r.stdout.lower(), \
+            f"{script}: a symlink to an existing file must NOT be reported as dangling: {r.stdout}"
+        # contrast: a genuinely dangling symlink IS reported as dangling
+        home2 = fresh_home()
+        os.makedirs(os.path.join(home2, ".claude"))
+        os.symlink(os.path.join(home2, "gone"), store_path(home2, sub))
+        r2 = run(script, ["status"], home2)
+        assert r2.returncode == 4 and "dangling" in r2.stdout.lower(), \
+            f"{script}: expected dangling, got: {r2.stdout}"
 
 
 def main():
