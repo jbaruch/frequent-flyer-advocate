@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.9.13 — 2026-06-22
+
+### Added
+
+- `complaints-bank.py`: hotel-loyalty complaints are now first-class via a `--store {airline,hotel}` flag (before the subcommand; default `airline` for back-compat). The June 2026 Hilton habitability complaint — which produced a 2-night refund + 30K Honors points — could not be filed before because `file` hard-required `--airline/--flight/--flight-date/--route`. Resolves #3 (the complaints half; #13 was the credits half).
+  - `--store hotel file` takes `--brand --property --reservation --stay-dates --loyalty-status` (plus the shared `--passenger/--category/--severity/--summary/--outcome`), writing to `complaint-bank/hotel-complaints.md` alongside the airline `complaints.md` in the same bank directory.
+  - `check` / `list` / `pending` / `resolve` are store-aware: hotel `check` filters and finds patterns on `--brand` / `--property` (parallel to airline's `--airline` / `--route`); hotel `list` shows brand/property/stay columns.
+  - Category vocabulary is per-store: hotel uses `HABITABILITY, SERVICE, BILLING, CLEANLINESS, NOISE, SAFETY, OTHER`; airline vocab unchanged. Each store rejects the other's categories.
+  - The two stores have independent ID spaces and never leak into each other's `list`/`check`.
+- `--store airline` (the default) is unchanged — existing call sites and `complaints.md` output are byte-identical.
+
+### Notes
+
+- FFA-only change: `complaints-bank.py` has no mirror in `jbaruch/jbaruch-travel-policy` (it ships only `credits-tracker.py`), so no byte-identical-sync ceremony applies. The live hotel data was already hand-maintained to the target schema, so nothing to migrate.
+- Out of scope (follow-up): wiring the letter-writing skill flow to drive hotel complaints end-to-end. This lands the bank/tracker storage + retrieval; the airline-specialist letter rules (DOT, Contract of Carriage, FlightAware) stay shared.
+
 ## 0.9.12 — 2026-06-22
 
 ### Fixed

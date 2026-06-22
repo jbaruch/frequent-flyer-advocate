@@ -1,21 +1,31 @@
 #!/usr/bin/env python3
 """
-Track filed complaint letters for pattern detection across airlines and passengers.
+Track filed complaint letters for pattern detection across airlines, hotels, and passengers.
 Storage at ~/.claude/complaint-bank/ so any skill can access it.
 Run `init` first to set up storage (default or custom location like Google Drive).
+
+The bank holds two parallel stores in the same directory, selected with `--store` (before the
+subcommand; default `airline` for back-compat):
+  airline → complaint-bank/complaints.md         (--airline/--flight/--flight-date/--route)
+  hotel   → complaint-bank/hotel-complaints.md    (--brand/--property/--reservation/--stay-dates/--loyalty-status)
+Both files share the same markdown structure; only the field schema and header template differ.
 
 Usage:
   python3 complaints-bank.py init [--default | --path DIR]   # set up new storage
   python3 complaints-bank.py link --path DIR                  # link an existing bank
-  python3 complaints-bank.py file --airline CODE --flight FLNUM --flight-date YYYY-MM-DD --route ORIG-DEST --passenger NAME --category CAT --severity SEV --summary "..." --outcome "..."
-  python3 complaints-bank.py check --airline CODE [--passenger NAME] [--route ROUTE]
-  python3 complaints-bank.py resolve --id ID --resolution STATUS [--note TEXT]
-  python3 complaints-bank.py list [--airline CODE] [--passenger NAME] [--category CAT]
+  python3 complaints-bank.py [--store airline] file --airline CODE --flight FLNUM --flight-date YYYY-MM-DD --route ORIG-DEST --passenger NAME --category CAT --severity SEV --summary "..." --outcome "..."
+  python3 complaints-bank.py --store hotel file --brand BRAND --property NAME --reservation CODE --stay-dates START/END --loyalty-status TIER --passenger NAME --category CAT --severity SEV --summary "..." --outcome "..."
+  python3 complaints-bank.py [--store airline] check --airline CODE [--passenger NAME] [--route ROUTE]
+  python3 complaints-bank.py --store hotel check --brand BRAND [--passenger NAME] [--property NAME]
+  python3 complaints-bank.py [--store {airline,hotel}] resolve --id ID --resolution STATUS [--note TEXT]
+  python3 complaints-bank.py [--store {airline,hotel}] list [filters]
 
 Examples:
   python3 complaints-bank.py file --airline DL --flight DL1234 --flight-date 2026-01-15 --route BNA-JFK --passenger "Baruch Sadogursky" --category CANCELLATION --severity MAJOR --summary "Flight cancelled 2hrs before departure, no rebooking for 36hrs" --outcome "Full refund + 75K miles"
+  python3 complaints-bank.py --store hotel file --brand Hilton --property "Hilton London Angel Islington" --reservation 3434402137 --stay-dates 2026-05-05/2026-05-08 --loyalty-status "Hilton Honors Gold" --passenger "Baruch Sadogursky" --category HABITABILITY --severity MAJOR --summary "No hot water for 2 of 3 nights, maintenance never resolved it" --outcome "Full refund of the stay + points compensation"
   python3 complaints-bank.py check --airline DL --passenger "Baruch Sadogursky"
-  python3 complaints-bank.py resolve --id 1 --resolution RESOLVED --note "Received 50K miles + $200 voucher"
+  python3 complaints-bank.py --store hotel check --brand Hilton --passenger "Baruch Sadogursky"
+  python3 complaints-bank.py --store hotel resolve --id 1 --resolution RESOLVED --note "2-night refund + 30K Honors points"
 """
 
 import argparse
@@ -25,14 +35,29 @@ import sys
 from datetime import datetime
 
 BANK_DIR = os.path.join(os.path.expanduser("~"), ".claude", "complaint-bank")
-COMPLAINTS_PATH = os.path.join(BANK_DIR, "complaints.md")
+COMPLAINTS_PATH = os.path.join(BANK_DIR, "complaints.md")  # airline store = bank-existence marker
+HOTEL_COMPLAINTS_PATH = os.path.join(BANK_DIR, "hotel-complaints.md")
 
+# Category vocabularies are per-store. SERVICE/OTHER overlap between them is fine.
 VALID_CATEGORIES = [
     "CANCELLATION", "DELAY", "DOWNGRADE", "BAGGAGE", "SERVICE",
     "DENIED_BOARDING", "TARMAC", "OTHER",
 ]
 
+VALID_HOTEL_CATEGORIES = [
+    "HABITABILITY", "SERVICE", "BILLING", "CLEANLINESS", "NOISE", "SAFETY", "OTHER",
+]
+
 VALID_SEVERITIES = ["MINOR", "MODERATE", "MAJOR", "RIGHTS_VIOLATION"]
+
+
+def store_path(store):
+    """Resolve the markdown file backing a store. Both live in the shared bank directory."""
+    return HOTEL_COMPLAINTS_PATH if store == "hotel" else COMPLAINTS_PATH
+
+
+def categories_for(store):
+    return VALID_HOTEL_CATEGORIES if store == "hotel" else VALID_CATEGORIES
 
 VALID_RESOLUTIONS = ["PENDING", "RESOLVED", "PARTIAL", "DENIED", "ESCALATED", "CLOSED"]
 
@@ -45,6 +70,17 @@ AIRLINE_NAMES = {
 EMPTY_BANK = """# Complaint Bank
 
 Filed complaints for pattern tracking. Use `complaints-bank.py` for all updates.
+
+## Filed Complaints
+
+<!-- COMPLAINTS_START — do not edit this marker -->
+<!-- COMPLAINTS_END — do not edit this marker -->
+"""
+
+EMPTY_HOTEL_BANK = """# Hotel Complaint Bank
+
+Filed hotel-loyalty complaints for pattern tracking. Use `complaints-bank.py --store hotel`
+for all updates. Shares the same markers and structure as the airline bank.
 
 ## Filed Complaints
 
@@ -92,17 +128,19 @@ def require_initialized():
     sys.exit(2)
 
 
-def ensure_bank():
-    """Create complaints.md inside the (already-initialized) bank if it's missing.
+def ensure_bank(store="airline"):
+    """Create the store's markdown file inside the (already-initialized) bank if it's missing.
 
     Assumes require_initialized() has passed — BANK_DIR exists (possibly via symlink).
-    Does NOT overwrite an existing bank, so linking to a populated store is safe.
+    Does NOT overwrite an existing file, so linking to a populated bank is safe. The hotel
+    store is a second file in the SAME directory, so its lazy creation never forks the bank.
     """
-    if not os.path.exists(COMPLAINTS_PATH):
+    path = store_path(store)
+    if not os.path.exists(path):
         real_dir = os.path.realpath(BANK_DIR)
         os.makedirs(real_dir, exist_ok=True)
-        with open(COMPLAINTS_PATH, "w") as f:
-            f.write(EMPTY_BANK)
+        with open(path, "w") as f:
+            f.write(EMPTY_HOTEL_BANK if store == "hotel" else EMPTY_BANK)
 
 
 def _refuse_unusable_store_path():
@@ -338,17 +376,17 @@ def cmd_init(args):
         _init_default()
 
 
-def read_bank():
+def read_bank(store="airline"):
     require_initialized()
-    ensure_bank()
-    with open(COMPLAINTS_PATH, "r") as f:
+    ensure_bank(store)
+    with open(store_path(store), "r") as f:
         return f.read()
 
 
-def write_bank(content):
+def write_bank(content, store="airline"):
     require_initialized()
-    ensure_bank()
-    with open(COMPLAINTS_PATH, "w") as f:
+    ensure_bank(store)
+    with open(store_path(store), "w") as f:
         f.write(content)
 
 
@@ -389,10 +427,25 @@ def parse_complaints(content):
     return complaints
 
 
-def format_complaint(c):
-    lines = [f"### #{c['id']} — [{c['category']}] {c.get('flight', '?')} {c.get('route', '?')} {c.get('flight_date', '?')}"]
-    for key in ["date_filed", "airline", "flight", "flight_date", "route", "passenger",
-                "severity", "summary", "outcome_requested", "resolution", "resolution_note"]:
+AIRLINE_FIELDS = ["date_filed", "airline", "flight", "flight_date", "route", "passenger",
+                  "severity", "summary", "outcome_requested", "resolution", "resolution_note"]
+
+# Hotel keeps an explicit Category bullet (airline carries category only in the header) to
+# match the hand-maintained hotel-complaints.md schema.
+HOTEL_FIELDS = ["date_filed", "brand", "property", "reservation", "stay_dates", "loyalty_status",
+                "passenger", "category", "severity", "summary", "outcome_requested",
+                "resolution", "resolution_note"]
+
+
+def format_complaint(c, store="airline"):
+    if store == "hotel":
+        header = f"### #{c['id']} — [{c['category']}] {c.get('property', '?')} {c.get('stay_dates', '?')}"
+        fields = HOTEL_FIELDS
+    else:
+        header = f"### #{c['id']} — [{c['category']}] {c.get('flight', '?')} {c.get('route', '?')} {c.get('flight_date', '?')}"
+        fields = AIRLINE_FIELDS
+    lines = [header]
+    for key in fields:
         if key in c:
             label = key.replace("_", " ").title()
             lines.append(f"- **{label}**: {c[key]}")
@@ -415,75 +468,146 @@ def insert_complaint(content, complaint_md):
     return f"{before}\n\n{complaint_md}\n\n{after}"
 
 
+def _require_store_args(args, store):
+    """Enforce the per-store required `file` args (argparse can't, since --store is a parent
+    option resolved alongside them). Exits 1 with an actionable message listing what's missing.
+    """
+    shared = ["passenger", "category", "severity", "summary", "outcome"]
+    needed = (["brand", "property", "reservation", "stay_dates", "loyalty_status"] + shared
+              if store == "hotel"
+              else ["airline", "flight", "flight_date", "route"] + shared)
+    missing = [n for n in needed if not getattr(args, n, None)]
+    if missing:
+        flags = ", ".join("--" + n.replace("_", "-") for n in missing)
+        print(f"ERROR: `--store {store} file` requires: {flags}", file=sys.stderr)
+        sys.exit(1)
+
+
 def cmd_file(args):
+    store = args.store
+    _require_store_args(args, store)
+
     cat = args.category.upper()
-    if cat not in VALID_CATEGORIES:
-        print(f"ERROR: Invalid category '{cat}'. Valid: {', '.join(VALID_CATEGORIES)}", file=sys.stderr)
+    valid_cats = categories_for(store)
+    if cat not in valid_cats:
+        print(f"ERROR: Invalid category '{cat}' for --store {store}. Valid: {', '.join(valid_cats)}", file=sys.stderr)
         sys.exit(1)
     sev = args.severity.upper()
     if sev not in VALID_SEVERITIES:
         print(f"ERROR: Invalid severity '{sev}'. Valid: {', '.join(VALID_SEVERITIES)}", file=sys.stderr)
         sys.exit(1)
 
-    content = read_bank()
+    content = read_bank(store)
     cid = next_id(content)
 
     complaint = {
         "id": cid,
         "category": cat,
         "date_filed": datetime.now().strftime("%Y-%m-%d"),
-        "airline": args.airline.upper(),
-        "flight": args.flight,
-        "flight_date": args.flight_date,
-        "route": args.route.upper(),
         "passenger": args.passenger,
         "severity": sev,
         "summary": args.summary,
         "outcome_requested": args.outcome,
         "resolution": "PENDING",
     }
+    if store == "hotel":
+        complaint.update({
+            "brand": args.brand,
+            "property": args.property,
+            "reservation": args.reservation,
+            "stay_dates": args.stay_dates,
+            "loyalty_status": args.loyalty_status,
+        })
+    else:
+        complaint.update({
+            "airline": args.airline.upper(),
+            "flight": args.flight,
+            "flight_date": args.flight_date,
+            "route": args.route.upper(),
+        })
 
-    complaint_md = format_complaint(complaint)
+    complaint_md = format_complaint(complaint, store)
     content = insert_complaint(content, complaint_md)
-    write_bank(content)
+    write_bank(content, store)
 
-    airline_name = AIRLINE_NAMES.get(args.airline.upper(), args.airline.upper())
-    print(f"Filed complaint #{cid}: [{cat}] {args.flight} {args.route} ({airline_name})")
+    if store == "hotel":
+        print(f"Filed complaint #{cid}: [{cat}] {args.property} {args.stay_dates} ({args.brand})")
+    else:
+        airline_name = AIRLINE_NAMES.get(args.airline.upper(), args.airline.upper())
+        print(f"Filed complaint #{cid}: [{cat}] {args.flight} {args.route} ({airline_name})")
     print(f"  Passenger: {args.passenger}")
     print(f"  Severity: {sev}")
 
 
+def _complaint_line(c, store):
+    """One-line summary of a complaint for `check`, per store."""
+    sev = c.get("severity", "?")
+    res = c.get("resolution", "PENDING")
+    res_note = f" ({c['resolution_note']})" if c.get("resolution_note") else ""
+    if store == "hotel":
+        ident = f"{c.get('property', '?')} {c.get('stay_dates', '?')}"
+    else:
+        ident = f"{c.get('flight', '?')} {c.get('route', '?')} {c.get('flight_date', '?')}"
+    return f"  #{c['id']} — {ident} [{sev}] — {c.get('outcome_requested', '?')} -> {res}{res_note}"
+
+
+def _recency_date(c, store):
+    """Parse the complaint's reference date for recency detection. Hotel uses the stay's start
+    (the part before '/' in stay_dates); airline uses flight_date. Returns None if unparseable.
+    """
+    raw = (c.get("stay_dates", "").split("/")[0] if store == "hotel" else c.get("flight_date", ""))
+    try:
+        return datetime.strptime(raw.strip(), "%Y-%m-%d")
+    except ValueError:
+        return None
+
+
 def cmd_check(args):
-    content = read_bank()
+    store = args.store
+    if store == "hotel":
+        if not args.brand:
+            print("ERROR: `--store hotel check` requires --brand.", file=sys.stderr)
+            sys.exit(1)
+        primary = args.brand
+        primary_label = f"{args.brand}"
+        secondary_field, secondary_flag = "property", "property"
+        secondary_val = args.property
+    else:
+        if not args.airline:
+            print("ERROR: `check` requires --airline.", file=sys.stderr)
+            sys.exit(1)
+        primary = args.airline.upper()
+        primary_label = f"{AIRLINE_NAMES.get(primary, primary)} ({primary})"
+        secondary_field, secondary_flag = "route", "route"
+        secondary_val = args.route
+
+    content = read_bank(store)
     complaints = parse_complaints(content)
 
     if not complaints:
         print("No complaints in the bank.")
         return
 
-    # Filter by airline
-    airline = args.airline.upper()
-    matches = [c for c in complaints if c.get("airline", "").upper() == airline]
+    primary_field = "brand" if store == "hotel" else "airline"
+    matches = [c for c in complaints if c.get(primary_field, "").upper() == primary.upper()]
 
     if args.passenger:
         matches = [c for c in matches if args.passenger.lower() in c.get("passenger", "").lower()]
 
-    if args.route:
-        route = args.route.upper()
-        matches = [c for c in matches if c.get("route", "").upper() == route]
+    if secondary_val:
+        matches = [c for c in matches if c.get(secondary_field, "").upper() == secondary_val.upper()]
 
     if not matches:
-        filters = [f"airline={airline}"]
+        filters = [f"{primary_field}={primary}"]
         if args.passenger:
             filters.append(f"passenger={args.passenger}")
-        if args.route:
-            filters.append(f"route={args.route}")
+        if secondary_val:
+            filters.append(f"{secondary_flag}={secondary_val}")
         print(f"No prior complaints matching {', '.join(filters)}.")
         return
 
-    airline_name = AIRLINE_NAMES.get(airline, airline)
     pax = args.passenger or "all passengers"
-    print(f"=== Complaint History: {airline_name} ({airline}) — {pax} ===\n")
+    print(f"=== Complaint History: {primary_label} — {pax} ===\n")
     print(f"{len(matches)} prior complaint(s) found.\n")
 
     # Group by category
@@ -492,7 +616,7 @@ def cmd_check(args):
         cat = c.get("category", "OTHER")
         by_cat.setdefault(cat, []).append(c)
 
-    for cat in VALID_CATEGORIES:
+    for cat in categories_for(store):
         if cat not in by_cat:
             continue
         group = by_cat[cat]
@@ -502,22 +626,19 @@ def cmd_check(args):
         else:
             print(f"{cat} ({len(group)} {label})")
         for c in group:
-            res = c.get("resolution", "PENDING")
-            res_note = f" ({c['resolution_note']})" if c.get("resolution_note") else ""
-            sev = c.get("severity", "?")
-            print(f"  #{c['id']} — {c.get('flight', '?')} {c.get('route', '?')} {c.get('flight_date', '?')} [{sev}] — {c.get('outcome_requested', '?')} -> {res}{res_note}")
+            print(_complaint_line(c, store))
         print()
 
-    # Group by route
-    by_route = {}
+    # Group by secondary dimension (airline: route; hotel: property)
+    by_secondary = {}
     for c in matches:
-        r = c.get("route", "?")
-        by_route.setdefault(r, []).append(c)
+        key = c.get(secondary_field, "?")
+        by_secondary.setdefault(key, []).append(c)
 
-    route_patterns = {r: cs for r, cs in by_route.items() if len(cs) >= 2}
-    if route_patterns:
-        for r, cs in route_patterns.items():
-            print(f"ROUTE PATTERN: {r} ({len(cs)} complaints)")
+    secondary_patterns = {k: cs for k, cs in by_secondary.items() if len(cs) >= 2}
+    if secondary_patterns:
+        for k, cs in secondary_patterns.items():
+            print(f"{secondary_flag.upper()} PATTERN: {k} ({len(cs)} complaints)")
         print()
 
     # Resolution summary
@@ -535,12 +656,7 @@ def cmd_check(args):
         print(f"\n{len(denied)} prior complaint(s) DENIED — strengthens escalation language")
 
     # Check recency
-    dates = []
-    for c in matches:
-        try:
-            dates.append(datetime.strptime(c.get("flight_date", ""), "%Y-%m-%d"))
-        except ValueError:
-            pass
+    dates = [d for d in (_recency_date(c, store) for c in matches) if d is not None]
     if len(dates) >= 2:
         dates.sort()
         span = (dates[-1] - dates[0]).days
@@ -550,7 +666,8 @@ def cmd_check(args):
 
 
 def cmd_resolve(args):
-    content = read_bank()
+    store = args.store
+    content = read_bank(store)
     complaints = parse_complaints(content)
 
     target = None
@@ -586,18 +703,25 @@ def cmd_resolve(args):
                     lines.insert(i + 1, f"- **Resolution Note**: {args.note}")
             break
 
-    write_bank("\n".join(lines))
+    write_bank("\n".join(lines), store)
     print(f"Updated complaint #{args.id}: resolution = {res}")
     if args.note:
         print(f"  Note: {args.note}")
 
 
 def cmd_list(args):
-    content = read_bank()
+    store = args.store
+    content = read_bank(store)
     complaints = parse_complaints(content)
 
-    if args.airline:
-        complaints = [c for c in complaints if c.get("airline", "").upper() == args.airline.upper()]
+    if store == "hotel":
+        if args.brand:
+            complaints = [c for c in complaints if c.get("brand", "").upper() == args.brand.upper()]
+        if args.property:
+            complaints = [c for c in complaints if args.property.lower() in c.get("property", "").lower()]
+    else:
+        if args.airline:
+            complaints = [c for c in complaints if c.get("airline", "").upper() == args.airline.upper()]
     if args.passenger:
         complaints = [c for c in complaints if args.passenger.lower() in c.get("passenger", "").lower()]
     if args.category:
@@ -607,14 +731,21 @@ def cmd_list(args):
         print("No complaints found.")
         return
 
-    print(f"{'#':<5} {'Date':<12} {'Airline':<8} {'Flight':<10} {'Route':<10} {'Category':<16} {'Severity':<12} {'Resolution':<12}")
-    print(f"{'-'*5} {'-'*12} {'-'*8} {'-'*10} {'-'*10} {'-'*16} {'-'*12} {'-'*12}")
-    for c in complaints:
-        print(f"{c['id']:<5} {c.get('flight_date', '?'):<12} {c.get('airline', '?'):<8} {c.get('flight', '?'):<10} {c.get('route', '?'):<10} {c.get('category', '?'):<16} {c.get('severity', '?'):<12} {c.get('resolution', '?'):<12}")
+    if store == "hotel":
+        print(f"{'#':<5} {'Stay':<24} {'Brand':<12} {'Property':<28} {'Category':<14} {'Severity':<12} {'Resolution':<12}")
+        print(f"{'-'*5} {'-'*24} {'-'*12} {'-'*28} {'-'*14} {'-'*12} {'-'*12}")
+        for c in complaints:
+            print(f"{c['id']:<5} {c.get('stay_dates', '?'):<24} {c.get('brand', '?'):<12} {c.get('property', '?')[:28]:<28} {c.get('category', '?'):<14} {c.get('severity', '?'):<12} {c.get('resolution', '?'):<12}")
+    else:
+        print(f"{'#':<5} {'Date':<12} {'Airline':<8} {'Flight':<10} {'Route':<10} {'Category':<16} {'Severity':<12} {'Resolution':<12}")
+        print(f"{'-'*5} {'-'*12} {'-'*8} {'-'*10} {'-'*10} {'-'*16} {'-'*12} {'-'*12}")
+        for c in complaints:
+            print(f"{c['id']:<5} {c.get('flight_date', '?'):<12} {c.get('airline', '?'):<8} {c.get('flight', '?'):<10} {c.get('route', '?'):<10} {c.get('category', '?'):<16} {c.get('severity', '?'):<12} {c.get('resolution', '?'):<12}")
 
 
-def cmd_pending(_args):
-    content = read_bank()
+def cmd_pending(args):
+    store = args.store
+    content = read_bank(store)
     complaints = parse_complaints(content)
     pending = [c for c in complaints if c.get("resolution", "PENDING") == "PENDING"]
 
@@ -624,10 +755,13 @@ def cmd_pending(_args):
 
     print(f"{len(pending)} complaint(s) awaiting resolution:\n")
     for c in pending:
-        airline = c.get("airline", "?")
-        airline_name = AIRLINE_NAMES.get(airline, airline)
         filed = c.get("date_filed", "?")
-        print(f"  #{c['id']} — {airline_name} {c.get('flight', '?')} {c.get('route', '?')} {c.get('flight_date', '?')}")
+        if store == "hotel":
+            print(f"  #{c['id']} — {c.get('brand', '?')} {c.get('property', '?')} {c.get('stay_dates', '?')}")
+        else:
+            airline = c.get("airline", "?")
+            airline_name = AIRLINE_NAMES.get(airline, airline)
+            print(f"  #{c['id']} — {airline_name} {c.get('flight', '?')} {c.get('route', '?')} {c.get('flight_date', '?')}")
         print(f"     Filed: {filed} | {c.get('category', '?')} [{c.get('severity', '?')}]")
         print(f"     Requested: {c.get('outcome_requested', '?')}")
         print()
@@ -638,6 +772,10 @@ if __name__ == "__main__":
         description="Track filed complaint letters for pattern detection",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    # Parent option — must precede the subcommand: `complaints-bank.py --store hotel file ...`.
+    # Defaults to airline so every existing call site is byte-unchanged.
+    parser.add_argument("--store", choices=["airline", "hotel"], default="airline",
+                        help="Which complaint store to act on (default: airline)")
     sub = parser.add_subparsers(dest="command")
 
     init = sub.add_parser("init", help="Set up complaint bank storage")
@@ -650,21 +788,32 @@ if __name__ == "__main__":
 
     sub.add_parser("status", help="Report bank readiness: ready (0) / missing (3) / invalid (4)")
 
+    # `file`: store-specific required args (--airline… vs --brand…) can't be argparse-required
+    # because --store is resolved alongside them; cmd_file enforces them per store. The shared
+    # args stay argparse-required since both stores need them.
     fl = sub.add_parser("file", help="File a new complaint")
-    fl.add_argument("--airline", required=True, help="Airline code (e.g. DL, AA, UA)")
-    fl.add_argument("--flight", required=True, help="Flight number (e.g. DL1234)")
-    fl.add_argument("--flight-date", required=True, help="Date of flight (YYYY-MM-DD)")
-    fl.add_argument("--route", required=True, help="Route (e.g. BNA-JFK)")
+    fl.add_argument("--airline", help="[airline] Airline code (e.g. DL, AA, UA)")
+    fl.add_argument("--flight", help="[airline] Flight number (e.g. DL1234)")
+    fl.add_argument("--flight-date", help="[airline] Date of flight (YYYY-MM-DD)")
+    fl.add_argument("--route", help="[airline] Route (e.g. BNA-JFK)")
+    fl.add_argument("--brand", help="[hotel] Hotel brand (e.g. Hilton, Marriott)")
+    fl.add_argument("--property", help="[hotel] Property name (e.g. Hilton London Angel Islington)")
+    fl.add_argument("--reservation", help="[hotel] Reservation/confirmation number")
+    fl.add_argument("--stay-dates", help="[hotel] Stay dates (YYYY-MM-DD/YYYY-MM-DD)")
+    fl.add_argument("--loyalty-status", help="[hotel] Loyalty tier (e.g. Hilton Honors Gold)")
     fl.add_argument("--passenger", required=True, help="Passenger name")
-    fl.add_argument("--category", required=True, help=f"Category: {', '.join(VALID_CATEGORIES)}")
+    fl.add_argument("--category", required=True,
+                    help=f"Category — airline: {', '.join(VALID_CATEGORIES)}; hotel: {', '.join(VALID_HOTEL_CATEGORIES)}")
     fl.add_argument("--severity", required=True, help=f"Severity: {', '.join(VALID_SEVERITIES)}")
     fl.add_argument("--summary", required=True, help="1-2 sentence summary of what happened")
     fl.add_argument("--outcome", required=True, help="What was requested in the letter")
 
     chk = sub.add_parser("check", help="Check for complaint patterns")
-    chk.add_argument("--airline", required=True, help="Airline code")
+    chk.add_argument("--airline", help="[airline] Airline code (required for --store airline)")
+    chk.add_argument("--brand", help="[hotel] Hotel brand (required for --store hotel)")
     chk.add_argument("--passenger", help="Filter by passenger name")
-    chk.add_argument("--route", help="Filter by route")
+    chk.add_argument("--route", help="[airline] Filter by route")
+    chk.add_argument("--property", help="[hotel] Filter by property name")
 
     res = sub.add_parser("resolve", help="Update complaint resolution")
     res.add_argument("--id", type=int, required=True, help="Complaint ID")
@@ -674,9 +823,11 @@ if __name__ == "__main__":
     sub.add_parser("pending", help="List complaints awaiting resolution")
 
     ls = sub.add_parser("list", help="List complaints")
-    ls.add_argument("--airline", help="Filter by airline code")
+    ls.add_argument("--airline", help="[airline] Filter by airline code")
+    ls.add_argument("--brand", help="[hotel] Filter by hotel brand")
+    ls.add_argument("--property", help="[hotel] Filter by property name (substring)")
     ls.add_argument("--passenger", help="Filter by passenger name")
-    ls.add_argument("--category", help=f"Filter by category: {', '.join(VALID_CATEGORIES)}")
+    ls.add_argument("--category", help="Filter by category (store-appropriate vocab)")
 
     args = parser.parse_args()
     if not args.command:
