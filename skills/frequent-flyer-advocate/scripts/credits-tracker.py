@@ -893,7 +893,17 @@ def cmd_check(args):
         ctype = c["type"]
         reasons = []
 
-        if ctype == "GUC":
+        if credit_brand:
+            # A brand-tagged credit is a hotel/program credit — match it ONLY by brand.
+            # The airline-era heuristics below key off scenario words ("business", "domestic",
+            # "companion") and the AMEX always-on note, none of which know about the issuer;
+            # routing a hotel credit through them would surface it in an unrelated airline
+            # scenario. Brand match is the single gate for the entire --brand surface, every
+            # credit type, not just VOUCHER.
+            if credit_brand in scenario_hotels:
+                reasons.append(f"{TYPE_LABELS.get(ctype, ctype)} — {c.get('value', '?')} valid at {credit_brand}")
+
+        elif ctype == "GUC":
             if any(w in scenario for w in ["international", "transatlantic", "transpacific",
                                             "tatl", "tpac", "delta one", "business"]):
                 if "DL" in scenario_airlines:
@@ -917,10 +927,8 @@ def cmd_check(args):
             if credit_airline and credit_airline in scenario_airlines:
                 label = "eCredit" if ctype == "ECREDIT" else "Voucher"
                 reasons.append(f"{label} ${c.get('value', '?')} valid on {credit_airline}")
-            elif not credit_airline and not credit_brand:
-                # Neither airline nor brand on the credit — flag it as potentially applicable.
-                # A brand-tagged credit is handled by the hotel-brand block below, so it does
-                # not get a spurious "airline not specified" note in an airline scenario.
+            elif not credit_airline:
+                # No airline (and, in this branch, no brand) on the credit — flag it manually.
                 reasons.append(f"{c['type']} ${c.get('value', '?')} — airline not specified, check manually")
 
         elif ctype == "PARTNER":
@@ -934,13 +942,6 @@ def cmd_check(args):
             # Gift cards, misc credits — match by airline
             if credit_airline and credit_airline in scenario_airlines:
                 reasons.append(f"{c.get('description', 'Credit')} — ${c.get('value', '?')} valid on {credit_airline}")
-
-        # Hotel-brand matching — parallel to the airline matching above. Any credit type can
-        # carry a --brand (a Hilton stay voucher, comp nights, points); surface it when its
-        # brand matches a hotel brand named in the scenario. This is the use-it-or-lose-it
-        # trigger for hotel stays that airline-only matching could never fire.
-        if credit_brand and credit_brand in scenario_hotels:
-            reasons.append(f"{TYPE_LABELS.get(ctype, ctype)} — {c.get('value', '?')} valid at {credit_brand}")
 
         if reasons:
             applicable.append((c, reasons, pax_in_filter))

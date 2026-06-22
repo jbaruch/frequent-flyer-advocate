@@ -393,6 +393,27 @@ def test_ambiguous_words_do_not_false_match_hotel_brands():
             f"{sc!r} must not detect any hotel brand:\n{r.stdout}"
 
 
+def test_brand_tagged_non_voucher_credit_no_cross_bleed():
+    # A brand-tagged COMP (e.g. Hilton Honors points) must NOT surface in an airline scenario,
+    # even one whose words ("domestic", "companion") trip the airline-era COMP heuristic. Brand
+    # is the single gate across the whole --brand surface, not just VOUCHER.
+    home = fresh_home()
+    assert run(CREDITS, ["init", "--default"], home).returncode == 0
+    assert run(CREDITS, ["add", "--type", "COMP", "--desc", "Honors points", "--value",
+                         "30000 points", "--passenger", "Baruch", "--brand", "Hilton Honors"],
+               home).returncode == 0
+    airline = run(CREDITS, ["check", "--scenario", "Delta round-trip domestic companion fare"], home)
+    assert airline.returncode == 0, airline.stderr
+    assert "Honors points" not in airline.stdout, \
+        f"a brand-tagged COMP must not bleed into an airline scenario:\n{airline.stdout}"
+    assert "Companion certificate may apply" not in airline.stdout, \
+        f"the airline-era COMP heuristic must not fire for a hotel credit:\n{airline.stdout}"
+    # ...but it DOES surface for the matching hotel scenario.
+    hotel = run(CREDITS, ["check", "--scenario", "Hilton London, 2 nights"], home)
+    assert hotel.returncode == 0 and "Honors points" in hotel.stdout, \
+        f"the brand-tagged COMP should surface for a Hilton scenario:\n{hotel.stdout}"
+
+
 def test_unambiguous_brand_phrase_still_matches():
     # The flip side: the disambiguated multi-word phrase must still match its chain.
     home = fresh_home()
