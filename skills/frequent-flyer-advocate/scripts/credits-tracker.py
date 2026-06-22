@@ -81,22 +81,40 @@ AIRLINE_ALIASES = {
 # Parallel to AIRLINE_ALIASES: the airline dimension is --airline (2-letter IATA codes);
 # the hotel/program dimension is --brand (chain-level codes). Sub-brands collapse to their
 # parent chain so a "Conrad" or "Waldorf Astoria" stay surfaces a HILTON-tagged credit.
+#
+# Every alias must be UNAMBIGUOUS in free-form scenario text — either a coined brand word
+# that does not occur as ordinary English (Sheraton, Bonvoy, Andaz) or a multi-word phrase
+# (Choice Hotels, Courtyard by Marriott). Bare common words (honors, choice, courtyard,
+# renaissance, thompson, hampton, curio) are deliberately excluded: as standalone aliases
+# they would match prose like "Delta honors the upgrade" or "we had no choice" and surface a
+# hotel credit in an unrelated airline scenario. The set stays fully enumerable per
+# jbaruch/coding-policy: script-delegation.
 HOTEL_ALIASES = {
-    "hilton": "HILTON", "hilton honors": "HILTON", "honors": "HILTON",
-    "conrad": "HILTON", "waldorf astoria": "HILTON", "doubletree": "HILTON",
-    "hampton": "HILTON", "embassy suites": "HILTON", "curio": "HILTON",
+    # Hilton portfolio
+    "hilton": "HILTON", "hilton honors": "HILTON", "conrad": "HILTON",
+    "waldorf astoria": "HILTON", "doubletree": "HILTON", "embassy suites": "HILTON",
+    "hampton inn": "HILTON", "hampton by hilton": "HILTON", "curio collection": "HILTON",
+    # Marriott portfolio
     "marriott": "MARRIOTT", "bonvoy": "MARRIOTT", "ritz-carlton": "MARRIOTT",
     "ritz carlton": "MARRIOTT", "sheraton": "MARRIOTT", "westin": "MARRIOTT",
     "st. regis": "MARRIOTT", "st regis": "MARRIOTT", "le meridien": "MARRIOTT",
-    "courtyard": "MARRIOTT", "renaissance": "MARRIOTT",
+    "courtyard by marriott": "MARRIOTT", "renaissance hotel": "MARRIOTT",
+    "renaissance hotels": "MARRIOTT",
+    # IHG portfolio
     "ihg": "IHG", "intercontinental": "IHG", "holiday inn": "IHG",
     "crowne plaza": "IHG", "kimpton": "IHG", "hotel indigo": "IHG",
+    # Hyatt portfolio
     "hyatt": "HYATT", "world of hyatt": "HYATT", "park hyatt": "HYATT",
-    "andaz": "HYATT", "grand hyatt": "HYATT", "thompson": "HYATT",
+    "andaz": "HYATT", "grand hyatt": "HYATT", "thompson hotel": "HYATT",
+    "thompson hotels": "HYATT",
+    # Accor portfolio
     "accor": "ACCOR", "sofitel": "ACCOR", "novotel": "ACCOR",
-    "pullman": "ACCOR", "fairmont": "ACCOR", "raffles": "ACCOR",
+    "fairmont": "ACCOR", "pullman hotel": "ACCOR", "pullman hotels": "ACCOR",
+    "raffles hotel": "ACCOR", "raffles hotels": "ACCOR",
+    # Other chains
     "wyndham": "WYNDHAM", "ramada": "WYNDHAM", "days inn": "WYNDHAM",
-    "choice": "CHOICE", "comfort inn": "CHOICE", "quality inn": "CHOICE",
+    "choice hotels": "CHOICE", "choice privileges": "CHOICE",
+    "comfort inn": "CHOICE", "quality inn": "CHOICE",
     "best western": "BESTWESTERN",
 }
 
@@ -666,8 +684,8 @@ def cmd_list(args):
                     pass
             print()
     else:
-        print(f"{'#':<5} {'Type':<10} {'Passenger':<20} {'Airline':<8} {'Brand':<10} {'Description':<30} {'Value':<15} {'Expiry':<12} {'Status':<10}")
-        print(f"{'-'*5} {'-'*10} {'-'*20} {'-'*8} {'-'*10} {'-'*30} {'-'*15} {'-'*12} {'-'*10}")
+        print(f"{'#':<5} {'Type':<10} {'Passenger':<20} {'Airline':<8} {'Brand':<12} {'Description':<30} {'Value':<15} {'Expiry':<12} {'Status':<10}")
+        print(f"{'-'*5} {'-'*10} {'-'*20} {'-'*8} {'-'*12} {'-'*30} {'-'*15} {'-'*12} {'-'*10}")
         for c in credits:
             status = ""
             if "expiry" in c:
@@ -689,8 +707,10 @@ def cmd_list(args):
             exp_str = c.get("expiry", "—")
             pax = c.get("passenger", "—")[:20]
             airline = c.get("airline", "—")[:8]
-            brand = (c.get("brand") or "—")[:10]
-            print(f"{c['id']:<5} {c['type']:<10} {pax:<20} {airline:<8} {brand:<10} {desc:<30} {val:<15} {exp_str:<12} {status:<10}")
+            # Show the normalized chain code (HILTON, BESTWESTERN) so the column is
+            # unambiguous and fits — every code in HOTEL_ALIASES is ≤ 11 chars.
+            brand = normalize_brand(c.get("brand", "")) or "—"
+            print(f"{c['id']:<5} {c['type']:<10} {pax:<20} {airline:<8} {brand:<12} {desc:<30} {val:<15} {exp_str:<12} {status:<10}")
 
 
 def cmd_add(args):

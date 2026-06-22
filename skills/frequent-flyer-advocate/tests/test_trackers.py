@@ -324,7 +324,7 @@ def test_add_brand_is_stored_and_shown_in_list():
     r = run(CREDITS, ["list"], home)
     assert r.returncode == 0, r.stderr
     assert "Brand" in r.stdout, f"list should have a Brand column:\n{r.stdout}"
-    assert "Hilton" in r.stdout, f"the Hilton voucher's brand should show:\n{r.stdout}"
+    assert "HILTON" in r.stdout, f"the Hilton voucher's normalized brand should show:\n{r.stdout}"
 
 
 def test_list_brand_filter_collapses_subbrands_to_chain():
@@ -337,6 +337,7 @@ def test_list_brand_filter_collapses_subbrands_to_chain():
     assert hit.returncode == 0 and "Conrad stay" in hit.stdout, \
         f"--brand Hilton should match a Conrad-tagged credit:\n{hit.stdout}"
     miss = run(CREDITS, ["list", "--brand", "Marriott"], home)
+    assert miss.returncode == 0, f"list --brand Marriott should succeed, got {miss.returncode}\n{miss.stderr}"
     assert "Conrad stay" not in miss.stdout, f"--brand Marriott must not match a Hilton credit:\n{miss.stdout}"
 
 
@@ -369,6 +370,38 @@ def test_check_hotel_credit_does_not_bleed_into_airline_scenario():
     assert "Comp 2-night stay" not in r.stdout, f"hotel voucher must not bleed into airline scenario:\n{r.stdout}"
     assert "airline not specified" not in r.stdout.lower(), \
         f"a brand-tagged credit must not get the 'airline not specified' note:\n{r.stdout}"
+
+
+def test_ambiguous_words_do_not_false_match_hotel_brands():
+    # The whole point of dropping bare aliases (honors, choice, courtyard, …): ordinary
+    # airline/travel prose containing those words must NOT surface a hotel credit. If any of
+    # these regress to bare aliases, a Hilton/Choice/Marriott credit bleeds into the wrong
+    # scenario.
+    home = _seeded_home_with_hotel_and_airline_credits()  # has a HILTON voucher
+    bleed_scenarios = [
+        "Delta honors the upgrade request",   # 'honors' must not mean Hilton
+        "Economy was our only choice",         # 'choice' must not mean Choice Hotels
+        "United courtyard-view lounge",        # 'courtyard' must not mean Marriott
+        "Renaissance-era art tour, AA flight", # 'renaissance' must not mean Marriott
+    ]
+    for sc in bleed_scenarios:
+        r = run(CREDITS, ["check", "--scenario", sc], home)
+        assert r.returncode == 0, f"{sc!r}: {r.stderr}"
+        assert "Comp 2-night stay" not in r.stdout, \
+            f"{sc!r} must NOT surface the Hilton voucher (ambiguous bare-word match):\n{r.stdout}"
+        assert "Hotel brands detected" not in r.stdout, \
+            f"{sc!r} must not detect any hotel brand:\n{r.stdout}"
+
+
+def test_unambiguous_brand_phrase_still_matches():
+    # The flip side: the disambiguated multi-word phrase must still match its chain.
+    home = fresh_home()
+    assert run(CREDITS, ["init", "--default"], home).returncode == 0
+    assert run(CREDITS, ["add", "--type", "VOUCHER", "--desc", "Free night", "--value",
+                         "1 night", "--passenger", "Baruch", "--brand", "Marriott"], home).returncode == 0
+    r = run(CREDITS, ["check", "--scenario", "Courtyard by Marriott, 2 nights"], home)
+    assert r.returncode == 0 and "Free night" in r.stdout and "MARRIOTT" in r.stdout, \
+        f"the 'Courtyard by Marriott' phrase should surface the MARRIOTT credit:\n{r.stdout}"
 
 
 def test_airline_only_check_unchanged_back_compat():
