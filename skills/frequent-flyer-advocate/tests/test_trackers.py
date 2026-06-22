@@ -544,6 +544,44 @@ def test_hotel_file_missing_store_specific_args_is_rejected():
     assert "traceback" not in r.stderr.lower(), f"crashed instead of clean error:\n{r.stderr}"
 
 
+def _bank_file(home, name):
+    return os.path.join(store_path(home, "complaint-bank"), name)
+
+
+def test_link_accepts_hotel_only_bank():
+    # A bank holding only hotel-complaints.md (no airline complaints yet) must still be
+    # linkable — hotel-complaints.md is a valid bank-existence marker too. Before the fix,
+    # `link` errored because it only looked for complaints.md.
+    home = fresh_home()
+    cloud = _mktemp(prefix="ffa-test-cloud-")
+    assert run(BANK, ["init", "--path", cloud], home).returncode == 0
+    assert run(BANK, _HOTEL_FILE_ARGS, home).returncode == 0
+    os.remove(os.path.join(cloud, "complaints.md"))      # make it hotel-only
+    os.unlink(store_path(home, "complaint-bank"))         # simulate a fresh machine: data in cloud
+    r = run(BANK, ["link", "--path", cloud], home)
+    assert r.returncode == 0, f"link to a hotel-only bank should succeed:\n{r.stderr}"
+    lst = run(BANK, ["--store", "hotel", "list"], home)
+    assert "Hilton" in lst.stdout, f"hotel data must survive the link:\n{lst.stdout}"
+
+
+def test_interactive_init_does_not_wipe_hotel_only_bank():
+    # Data-loss guard: a bank with hotel complaints but no airline complaints must read as
+    # POPULATED, so interactive `init` refuses to reinitialize (which would rmtree the dir and
+    # destroy the hotel data). Before the fix, emptiness was judged from complaints.md alone.
+    home = fresh_home()
+    assert run(BANK, ["init", "--default"], home).returncode == 0
+    assert run(BANK, _HOTEL_FILE_ARGS, home).returncode == 0
+    os.remove(_bank_file(home, "complaints.md"))          # hotel-only bank
+    r = run(BANK, ["init"], home, stdin_text="y\n")        # 'y' would confirm a wipe, if offered
+    assert r.returncode == 0, f"{r.stdout}{r.stderr}"
+    assert "has filed complaints" in r.stdout.lower(), \
+        f"a hotel-only bank must read as populated, not offer to reinitialize:\n{r.stdout}"
+    assert os.path.isfile(_bank_file(home, "hotel-complaints.md")), \
+        "hotel data must not be wiped"
+    lst = run(BANK, ["--store", "hotel", "list"], home)
+    assert "Hilton" in lst.stdout, f"hotel data must survive:\n{lst.stdout}"
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

@@ -245,13 +245,13 @@ def _link(target):
         )
         sys.exit(1)
     # `link` attaches to an EXISTING bank; it must not bootstrap one. Silently
-    # creating complaints.md here would turn a wrong/empty --path into a second,
+    # creating a store file here would turn a wrong/empty --path into a second,
     # diverging bank — the fork hazard this command exists to avoid. Use `init` for
-    # a fresh bank.
-    if not os.path.isfile(os.path.join(target, "complaints.md")):
+    # a fresh bank. Either store file (airline or hotel) marks an existing bank.
+    if not _bank_files_present(target):
         print(
-            f"ERROR: '{target}' has no complaints.md — `link` attaches to an existing "
-            f"bank, it does not create one.\n"
+            f"ERROR: '{target}' has no complaints.md or hotel-complaints.md — `link` "
+            f"attaches to an existing bank, it does not create one.\n"
             f"  Point --path at the real complaint-bank folder, or create a fresh bank:\n"
             f"      complaints-bank.py init --path {target}",
             file=sys.stderr,
@@ -274,10 +274,9 @@ def _link(target):
     os.makedirs(parent, exist_ok=True)
     os.symlink(target, BANK_DIR)
     print(f"Linked {BANK_DIR} -> {target}")
-    # complaints.md is guaranteed present (checked above), so this reports the real
-    # linked bank — it never bootstraps an empty one.
-    with open(COMPLAINTS_PATH, "r") as f:
-        filed = len(parse_complaints(f.read()))
+    # At least one store file is guaranteed present (checked above), so this reports the real
+    # linked bank — it never bootstraps an empty one. Count across both stores.
+    filed = _count_all_complaints(target)
     print(f"   Found existing bank ({filed} filed complaint(s)).")
 
 
@@ -340,10 +339,9 @@ def cmd_init(args):
         else:
             print(f"Already initialized. Storage: {real_path}")
 
-        has_complaints = False
-        if os.path.exists(COMPLAINTS_PATH):
-            with open(COMPLAINTS_PATH, "r") as f:
-                has_complaints = bool(parse_complaints(f.read()))
+        # Populated if EITHER store file has complaints — never just complaints.md, or a
+        # hotel-only bank would read as empty and the reinit path below would wipe it.
+        has_complaints = _count_all_complaints(BANK_DIR) > 0
 
         if has_complaints:
             print("Bank has filed complaints. To change location, move the data manually.")
@@ -425,6 +423,27 @@ def parse_complaints(content):
     if current:
         complaints.append(current)
     return complaints
+
+
+# Both store files are valid bank-existence markers — a bank may hold only hotel complaints,
+# only airline complaints, or both. link/init must treat the bank as existing/populated if
+# EITHER file is present/non-empty, never just complaints.md (else a hotel-only bank reads as
+# missing and the interactive-init reinit path would wipe live hotel data).
+_BANK_FILES = ("complaints.md", "hotel-complaints.md")
+
+
+def _bank_files_present(directory):
+    """Names of the store files that actually exist in a bank directory (may be empty)."""
+    return [f for f in _BANK_FILES if os.path.isfile(os.path.join(directory, f))]
+
+
+def _count_all_complaints(directory):
+    """Total filed complaints across both store files in a bank directory."""
+    total = 0
+    for f in _bank_files_present(directory):
+        with open(os.path.join(directory, f), "r") as fh:
+            total += len(parse_complaints(fh.read()))
+    return total
 
 
 AIRLINE_FIELDS = ["date_filed", "airline", "flight", "flight_date", "route", "passenger",
