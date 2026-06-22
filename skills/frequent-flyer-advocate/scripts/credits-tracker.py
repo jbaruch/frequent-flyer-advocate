@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """
-Track flight credits, vouchers, and upgrade certificates for the whole family.
+Track flight and hotel credits, vouchers, and upgrade certificates for the whole family.
 Inventory stored globally at ~/.claude/travel-credits/inventory.md so any skill can access it.
 Run `init` first to set up storage (default or custom location like Google Drive).
 
-Supports multiple passengers and airlines — the primary use is Baruch + Alice travel,
-but credits for kids or on non-Delta airlines are tracked too so nothing expires forgotten.
+Supports multiple passengers and issuers — the primary use is Baruch + Alice travel,
+but credits for kids, on non-Delta airlines, or on hotel brands (Hilton, Marriott, …) are
+tracked too so nothing expires forgotten. A credit is tagged with --airline (airline issuer)
+and/or --brand (hotel/loyalty-program issuer); both filter and surface independently.
 
 Usage:
   python3 credits-tracker.py init [--default | --path DIR]   # set up new storage
   python3 credits-tracker.py link --path DIR                  # link an existing inventory
-  python3 credits-tracker.py list [--type TYPE] [--passenger NAME] [--airline CODE] [--verbose]
-  python3 credits-tracker.py add --type TYPE --description DESC --value VALUE --passenger NAME [--expiry YYYY-MM-DD] [--airline CODE] [--restrictions TEXT] [--confirmation CODE]
+  python3 credits-tracker.py list [--type TYPE] [--passenger NAME] [--airline CODE] [--brand NAME] [--verbose]
+  python3 credits-tracker.py add --type TYPE --description DESC --value VALUE --passenger NAME [--expiry YYYY-MM-DD] [--airline CODE] [--brand NAME] [--restrictions TEXT] [--confirmation CODE]
   python3 credits-tracker.py use --id ID [--note TEXT]
   python3 credits-tracker.py expiring [--days N] [--passenger NAME]
   python3 credits-tracker.py check --scenario SCENARIO [--passengers NAME,NAME]
@@ -24,7 +26,9 @@ Examples:
   python3 credits-tracker.py add --type COMP --description "Delta Reserve companion cert 2026" --value "1 certificate" --expiry 2027-01-31 --passenger "Baruch Sadogursky" --airline DL --restrictions "Round-trip domestic or to/from Canada/Mexico, main cabin or above"
   python3 credits-tracker.py list --passenger baruch
   python3 credits-tracker.py expiring --days 90
+  python3 credits-tracker.py add --type VOUCHER --description "Complimentary 2-night stay" --value "2 nights" --expiry 2027-03-31 --passenger "Baruch Sadogursky" --brand Hilton --restrictions "Hilton London Angel Islington only"
   python3 credits-tracker.py check --scenario "American Airlines BNA-ORD economy repo"
+  python3 credits-tracker.py check --scenario "Hilton London, 3 nights" --passengers "Baruch,Alice"
   python3 credits-tracker.py check --scenario "Delta business JFK-CDG" --passengers "Baruch,Alice"
   python3 credits-tracker.py use --id 3 --note "Applied to BNA-YUL repo Mar 2026"
 """
@@ -73,6 +77,58 @@ AIRLINE_ALIASES = {
     "el al": "LY", "ly": "LY",
 }
 
+# Common hotel/loyalty-program name → brand code mappings for scenario matching.
+# Parallel to AIRLINE_ALIASES: the airline dimension is --airline (2-letter IATA codes);
+# the hotel/program dimension is --brand (chain-level codes). Sub-brands collapse to their
+# parent chain so a "Conrad" or "Waldorf Astoria" stay surfaces a HILTON-tagged credit.
+HOTEL_ALIASES = {
+    "hilton": "HILTON", "hilton honors": "HILTON", "honors": "HILTON",
+    "conrad": "HILTON", "waldorf astoria": "HILTON", "doubletree": "HILTON",
+    "hampton": "HILTON", "embassy suites": "HILTON", "curio": "HILTON",
+    "marriott": "MARRIOTT", "bonvoy": "MARRIOTT", "ritz-carlton": "MARRIOTT",
+    "ritz carlton": "MARRIOTT", "sheraton": "MARRIOTT", "westin": "MARRIOTT",
+    "st. regis": "MARRIOTT", "st regis": "MARRIOTT", "le meridien": "MARRIOTT",
+    "courtyard": "MARRIOTT", "renaissance": "MARRIOTT",
+    "ihg": "IHG", "intercontinental": "IHG", "holiday inn": "IHG",
+    "crowne plaza": "IHG", "kimpton": "IHG", "hotel indigo": "IHG",
+    "hyatt": "HYATT", "world of hyatt": "HYATT", "park hyatt": "HYATT",
+    "andaz": "HYATT", "grand hyatt": "HYATT", "thompson": "HYATT",
+    "accor": "ACCOR", "sofitel": "ACCOR", "novotel": "ACCOR",
+    "pullman": "ACCOR", "fairmont": "ACCOR", "raffles": "ACCOR",
+    "wyndham": "WYNDHAM", "ramada": "WYNDHAM", "days inn": "WYNDHAM",
+    "choice": "CHOICE", "comfort inn": "CHOICE", "quality inn": "CHOICE",
+    "best western": "BESTWESTERN",
+}
+
+
+def normalize_brand(name):
+    """Normalize a hotel/program brand to its chain code.
+
+    Maps known aliases (e.g. "Conrad", "Hilton Honors") to the parent chain code (HILTON);
+    falls back to the uppercased input so an unknown brand still filters/matches consistently.
+    """
+    if not name or not name.strip():
+        return ""
+    key = name.strip().lower()
+    if key in HOTEL_ALIASES:
+        return HOTEL_ALIASES[key]
+    return name.strip().upper()
+
+
+def _issuer_label(credit):
+    """Render a credit's issuer dimensions for display: airline, brand, or both.
+
+    Falls back to "Airline: —" when neither is set, so airline-only callers read unchanged.
+    """
+    parts = []
+    airline = credit.get("airline", "")
+    brand = credit.get("brand", "")
+    if airline:
+        parts.append(f"Airline: {airline}")
+    if brand:
+        parts.append(f"Brand: {normalize_brand(brand)}")
+    return " | ".join(parts) if parts else "Airline: —"
+
 
 def is_transferable(credit):
     """A credit with no passenger is transferable (gift cards, etc.)."""
@@ -101,6 +157,21 @@ def airlines_in_scenario(scenario):
         if len(word) == 2 and word.isupper() and word.isalpha():
             codes.add(word)
     return codes
+
+
+def hotels_in_scenario(scenario):
+    """Extract hotel/program brand codes mentioned in a scenario string.
+
+    Parallel to airlines_in_scenario, but brand-only: there is no 2-letter-code fallback
+    because hotel brand codes are words (HILTON, MARRIOTT), not IATA pairs.
+    """
+    scenario_lower = scenario.lower()
+    brands = set()
+    # Longest alias first so "hilton honors" wins over "hilton" / "honors" on overlap.
+    for alias in sorted(HOTEL_ALIASES, key=len, reverse=True):
+        if re.search(r'\b' + re.escape(alias) + r'\b', scenario_lower):
+            brands.add(HOTEL_ALIASES[alias])
+    return brands
 
 
 EMPTY_INVENTORY = """# Flight Credits, Vouchers & Upgrade Certificates Inventory
@@ -474,6 +545,8 @@ def format_credit(c):
         lines.append(f"- **Passenger**: {c['passenger']}")
     if "airline" in c:
         lines.append(f"- **Airline**: {c['airline']}")
+    if "brand" in c:
+        lines.append(f"- **Brand**: {c['brand']}")
     if "confirmation" in c:
         lines.append(f"- **Confirmation**: {c['confirmation']}")
     if "restrictions" in c:
@@ -555,6 +628,9 @@ def cmd_list(args):
         credits = [c for c in credits if passenger_matches(c, args.passenger)]
     if args.airline:
         credits = [c for c in credits if c.get("airline", "").upper() == args.airline.upper()]
+    if args.brand:
+        target = normalize_brand(args.brand)
+        credits = [c for c in credits if normalize_brand(c.get("brand", "")) == target]
 
     if not credits:
         filters = []
@@ -564,6 +640,8 @@ def cmd_list(args):
             filters.append(f"passenger={args.passenger}")
         if args.airline:
             filters.append(f"airline={args.airline}")
+        if args.brand:
+            filters.append(f"brand={normalize_brand(args.brand)}")
         filter_msg = f" matching {', '.join(filters)}" if filters else ""
         print(f"No active credits{filter_msg}.")
         return
@@ -588,8 +666,8 @@ def cmd_list(args):
                     pass
             print()
     else:
-        print(f"{'#':<5} {'Type':<10} {'Passenger':<20} {'Airline':<8} {'Description':<30} {'Value':<15} {'Expiry':<12} {'Status':<10}")
-        print(f"{'-'*5} {'-'*10} {'-'*20} {'-'*8} {'-'*30} {'-'*15} {'-'*12} {'-'*10}")
+        print(f"{'#':<5} {'Type':<10} {'Passenger':<20} {'Airline':<8} {'Brand':<10} {'Description':<30} {'Value':<15} {'Expiry':<12} {'Status':<10}")
+        print(f"{'-'*5} {'-'*10} {'-'*20} {'-'*8} {'-'*10} {'-'*30} {'-'*15} {'-'*12} {'-'*10}")
         for c in credits:
             status = ""
             if "expiry" in c:
@@ -611,7 +689,8 @@ def cmd_list(args):
             exp_str = c.get("expiry", "—")
             pax = c.get("passenger", "—")[:20]
             airline = c.get("airline", "—")[:8]
-            print(f"{c['id']:<5} {c['type']:<10} {pax:<20} {airline:<8} {desc:<30} {val:<15} {exp_str:<12} {status:<10}")
+            brand = (c.get("brand") or "—")[:10]
+            print(f"{c['id']:<5} {c['type']:<10} {pax:<20} {airline:<8} {brand:<10} {desc:<30} {val:<15} {exp_str:<12} {status:<10}")
 
 
 def cmd_add(args):
@@ -635,6 +714,8 @@ def cmd_add(args):
         credit["expiry"] = args.expiry
     if args.airline:
         credit["airline"] = args.airline
+    if args.brand:
+        credit["brand"] = args.brand
     if args.restrictions:
         credit["restrictions"] = args.restrictions
     if args.confirmation:
@@ -721,8 +802,10 @@ def cmd_expiring(args):
         pax = c.get("passenger", "?")
         airline = c.get("airline", "")
         airline_str = f" ({airline})" if airline else ""
+        brand = c.get("brand", "")
+        brand_str = f" | Brand: {normalize_brand(brand)}" if brand else ""
         print(f"  #{c['id']} [{c['type']}] {c['description']}")
-        print(f"     Passenger: {pax} | Airline: {airline_str or '—'} | Value: {c.get('value', '?')}")
+        print(f"     Passenger: {pax} | Airline: {airline_str or '—'}{brand_str} | Value: {c.get('value', '?')}")
         print(f"     Expiry: {c['expiry']} | {urgency}")
         if "restrictions" in c:
             print(f"     Restrictions: {c['restrictions']}")
@@ -753,12 +836,15 @@ def cmd_check(args):
     if args.passengers:
         pax_filter = [p.strip().lower() for p in args.passengers.split(",")]
 
-    # Extract airlines mentioned in the scenario
+    # Extract airlines and hotel brands mentioned in the scenario
     scenario_airlines = airlines_in_scenario(args.scenario)
+    scenario_hotels = hotels_in_scenario(args.scenario)
 
     print(f"=== Checking credits for: {args.scenario} ===")
     if scenario_airlines:
         print(f"    Airlines detected: {', '.join(sorted(scenario_airlines))}")
+    if scenario_hotels:
+        print(f"    Hotel brands detected: {', '.join(sorted(scenario_hotels))}")
     if pax_filter:
         print(f"    Filtering to passengers: {', '.join(args.passengers.split(','))}")
     print()
@@ -783,6 +869,7 @@ def cmd_check(args):
             pax_in_filter = any(f in pax_name.lower() for f in pax_filter)
 
         credit_airline = c.get("airline", "").upper()
+        credit_brand = normalize_brand(c.get("brand", ""))
         ctype = c["type"]
         reasons = []
 
@@ -810,8 +897,10 @@ def cmd_check(args):
             if credit_airline and credit_airline in scenario_airlines:
                 label = "eCredit" if ctype == "ECREDIT" else "Voucher"
                 reasons.append(f"{label} ${c.get('value', '?')} valid on {credit_airline}")
-            elif not credit_airline:
-                # No airline specified on the credit — flag it as potentially applicable
+            elif not credit_airline and not credit_brand:
+                # Neither airline nor brand on the credit — flag it as potentially applicable.
+                # A brand-tagged credit is handled by the hotel-brand block below, so it does
+                # not get a spurious "airline not specified" note in an airline scenario.
                 reasons.append(f"{c['type']} ${c.get('value', '?')} — airline not specified, check manually")
 
         elif ctype == "PARTNER":
@@ -826,6 +915,13 @@ def cmd_check(args):
             if credit_airline and credit_airline in scenario_airlines:
                 reasons.append(f"{c.get('description', 'Credit')} — ${c.get('value', '?')} valid on {credit_airline}")
 
+        # Hotel-brand matching — parallel to the airline matching above. Any credit type can
+        # carry a --brand (a Hilton stay voucher, comp nights, points); surface it when its
+        # brand matches a hotel brand named in the scenario. This is the use-it-or-lose-it
+        # trigger for hotel stays that airline-only matching could never fire.
+        if credit_brand and credit_brand in scenario_hotels:
+            reasons.append(f"{TYPE_LABELS.get(ctype, ctype)} — {c.get('value', '?')} valid at {credit_brand}")
+
         if reasons:
             applicable.append((c, reasons, pax_in_filter))
 
@@ -838,9 +934,9 @@ def cmd_check(args):
         for c, reasons in direct:
             exp_str = c.get("expiry", "no expiry")
             pax = c.get("passenger", "?")
-            airline = c.get("airline", "—")
+            issuer = _issuer_label(c)
             print(f"  #{c['id']} [{c['type']}] {c['description']}")
-            print(f"     Passenger: {pax} | Airline: {airline} | Value: {c.get('value', '?')} | Expiry: {exp_str}")
+            print(f"     Passenger: {pax} | {issuer} | Value: {c.get('value', '?')} | Expiry: {exp_str}")
             for r in reasons:
                 print(f"     → {r}")
             print()
@@ -850,9 +946,9 @@ def cmd_check(args):
         for c, reasons in other_pax:
             exp_str = c.get("expiry", "no expiry")
             pax = c.get("passenger", "?")
-            airline = c.get("airline", "—")
+            issuer = _issuer_label(c)
             print(f"  #{c['id']} [{c['type']}] {c['description']}")
-            print(f"     Passenger: {pax} | Airline: {airline} | Value: {c.get('value', '?')} | Expiry: {exp_str}")
+            print(f"     Passenger: {pax} | {issuer} | Value: {c.get('value', '?')} | Expiry: {exp_str}")
             for r in reasons:
                 print(f"     → {r}")
             print(f"     ⚡ {pax} is not on this trip, but could book separately to use this credit")
@@ -913,9 +1009,13 @@ def cmd_summary(args):
             if t in by_type:
                 for c in by_type[t]:
                     exp = c.get("expiry", "no expiry")
-                    airline = c.get("airline", "")
-                    airline_str = f" [{airline}]" if airline else ""
-                    print(f"    #{c['id']} [{t}]{airline_str} {c.get('description', '')[:45]} — {c.get('value', '?')} (exp: {exp})")
+                    tags = []
+                    if c.get("airline"):
+                        tags.append(c["airline"])
+                    if c.get("brand"):
+                        tags.append(normalize_brand(c["brand"]))
+                    tag_str = f" [{'/'.join(tags)}]" if tags else ""
+                    print(f"    #{c['id']} [{t}]{tag_str} {c.get('description', '')[:45]} — {c.get('value', '?')} (exp: {exp})")
         print()
 
     if total_monetary > 0:
@@ -933,6 +1033,7 @@ Examples:
   %(prog)s list                              Show all credits (all people)
   %(prog)s list --passenger baruch           Just Baruch's credits
   %(prog)s list --airline AA                 Credits valid on American
+  %(prog)s list --brand Hilton               Credits valid at Hilton (incl. Conrad, etc.)
   %(prog)s add --type ECREDIT \\
     --description "Canceled BNA-JFK" \\
     --value 347.20 --expiry 2026-12-15 \\
@@ -947,6 +1048,8 @@ Examples:
   %(prog)s check --scenario \\
     "American Airlines BNA-ORD economy"      What credits apply? (checks everyone)
   %(prog)s check --scenario \\
+    "Hilton London, 3 nights"                Surfaces hotel vouchers/comp nights too
+  %(prog)s check --scenario \\
     "Delta business JFK-CDG" \\
     --passengers "Baruch,Alice"              These travelers (still flags family)
   %(prog)s summary                           Overview by person
@@ -960,6 +1063,7 @@ Examples:
     ls.add_argument("--type", help=f"Filter by type: {', '.join(VALID_TYPES)}")
     ls.add_argument("--passenger", help="Filter by passenger name (substring match)")
     ls.add_argument("--airline", help="Filter by airline code (e.g. DL, AA, AF)")
+    ls.add_argument("--brand", help="Filter by hotel/program brand (e.g. Hilton, Marriott); sub-brands collapse to the chain")
     ls.add_argument("--verbose", "-v", action="store_true", help="Show full details")
 
     # add
@@ -970,6 +1074,7 @@ Examples:
     add.add_argument("--passenger", help="Passenger name (who owns this credit — omit for transferable items like gift cards)")
     add.add_argument("--expiry", help="Expiration date (YYYY-MM-DD)")
     add.add_argument("--airline", help="Airline code the credit is valid on (e.g. DL, AA, AF)")
+    add.add_argument("--brand", help="Hotel/program brand the credit is valid on (e.g. Hilton, Marriott, IHG, Hyatt)")
     add.add_argument("--restrictions", help="Usage restrictions")
     add.add_argument("--confirmation", help="Confirmation/reference code")
 

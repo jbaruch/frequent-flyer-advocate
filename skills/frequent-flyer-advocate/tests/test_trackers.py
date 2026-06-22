@@ -304,6 +304,84 @@ def test_status_distinguishes_symlink_to_file_from_dangling():
             f"{script}: expected dangling, got: {r2.stdout}"
 
 
+# ── hotel brand dimension (credits-tracker only) ──────────────────────────────
+
+def _seeded_home_with_hotel_and_airline_credits():
+    """Init a store and seed one hotel-brand voucher + one airline eCredit. Returns home."""
+    home = fresh_home()
+    assert run(CREDITS, ["init", "--default"], home).returncode == 0
+    assert run(CREDITS, ["add", "--type", "VOUCHER", "--desc", "Comp 2-night stay",
+                         "--value", "2 nights", "--expiry", "2027-03-31",
+                         "--passenger", "Baruch", "--brand", "Hilton"], home).returncode == 0
+    assert run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Canceled BNA-JFK",
+                         "--value", "347.20", "--expiry", "2027-12-15",
+                         "--passenger", "Baruch", "--airline", "DL"], home).returncode == 0
+    return home
+
+
+def test_add_brand_is_stored_and_shown_in_list():
+    home = _seeded_home_with_hotel_and_airline_credits()
+    r = run(CREDITS, ["list"], home)
+    assert r.returncode == 0, r.stderr
+    assert "Brand" in r.stdout, f"list should have a Brand column:\n{r.stdout}"
+    assert "Hilton" in r.stdout, f"the Hilton voucher's brand should show:\n{r.stdout}"
+
+
+def test_list_brand_filter_collapses_subbrands_to_chain():
+    # A credit tagged with a sub-brand (Conrad) must be found by filtering on the chain (Hilton).
+    home = fresh_home()
+    assert run(CREDITS, ["init", "--default"], home).returncode == 0
+    assert run(CREDITS, ["add", "--type", "VOUCHER", "--desc", "Conrad stay", "--value",
+                         "1 night", "--passenger", "Baruch", "--brand", "Conrad"], home).returncode == 0
+    hit = run(CREDITS, ["list", "--brand", "Hilton"], home)
+    assert hit.returncode == 0 and "Conrad stay" in hit.stdout, \
+        f"--brand Hilton should match a Conrad-tagged credit:\n{hit.stdout}"
+    miss = run(CREDITS, ["list", "--brand", "Marriott"], home)
+    assert "Conrad stay" not in miss.stdout, f"--brand Marriott must not match a Hilton credit:\n{miss.stdout}"
+
+
+def test_check_surfaces_hotel_credit_for_hotel_scenario():
+    # The core bug: a hotel scenario must surface a brand-tagged credit (airline-only matching
+    # never could). The use-it-or-lose-it prompt has to fire for hotel stays.
+    home = _seeded_home_with_hotel_and_airline_credits()
+    r = run(CREDITS, ["check", "--scenario", "Hilton London, 3 nights"], home)
+    assert r.returncode == 0, r.stderr
+    assert "Comp 2-night stay" in r.stdout, f"hotel voucher should surface:\n{r.stdout}"
+    assert "HILTON" in r.stdout, f"detected brand should be reported:\n{r.stdout}"
+    assert "Canceled BNA-JFK" not in r.stdout, f"airline credit must NOT surface for a hotel scenario:\n{r.stdout}"
+
+
+def test_check_brand_alias_matches_parent_chain():
+    # A sub-brand named in the scenario (Conrad) must surface a credit tagged with the chain.
+    home = _seeded_home_with_hotel_and_airline_credits()
+    r = run(CREDITS, ["check", "--scenario", "Conrad Tokyo, 2 nights"], home)
+    assert r.returncode == 0 and "Comp 2-night stay" in r.stdout, \
+        f"a Conrad scenario should surface the HILTON-tagged voucher:\n{r.stdout}"
+
+
+def test_check_hotel_credit_does_not_bleed_into_airline_scenario():
+    # An airline scenario must surface only the airline credit — the hotel voucher must not
+    # appear, and must not trigger the legacy "airline not specified" note.
+    home = _seeded_home_with_hotel_and_airline_credits()
+    r = run(CREDITS, ["check", "--scenario", "Delta business JFK-CDG"], home)
+    assert r.returncode == 0, r.stderr
+    assert "Canceled BNA-JFK" in r.stdout, f"airline eCredit should surface:\n{r.stdout}"
+    assert "Comp 2-night stay" not in r.stdout, f"hotel voucher must not bleed into airline scenario:\n{r.stdout}"
+    assert "airline not specified" not in r.stdout.lower(), \
+        f"a brand-tagged credit must not get the 'airline not specified' note:\n{r.stdout}"
+
+
+def test_airline_only_check_unchanged_back_compat():
+    # Back-compat: a store with only airline credits behaves exactly as before brand existed.
+    home = fresh_home()
+    assert run(CREDITS, ["init", "--default"], home).returncode == 0
+    assert run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "AA repo credit", "--value",
+                         "189.50", "--passenger", "Kid", "--airline", "AA"], home).returncode == 0
+    r = run(CREDITS, ["check", "--scenario", "American Airlines BNA-ORD economy"], home)
+    assert r.returncode == 0 and "AA repo credit" in r.stdout, \
+        f"airline matching must still work unchanged:\n{r.stdout}"
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0
