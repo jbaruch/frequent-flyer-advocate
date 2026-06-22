@@ -281,7 +281,10 @@ def cmd_init(args):
     if getattr(args, "default", False):
         _init_default()
         return
-    if getattr(args, "path", None):
+    if getattr(args, "path", None) is not None:
+        # Dispatch on presence, not truthiness: `init --path ""` must reach _init_custom's
+        # self-error-handled diagnostic, not fall through to the interactive branch. argparse
+        # leaves args.path as None when --path is absent, so None alone means "go interactive".
         _init_custom(os.path.expanduser(args.path))
         return
 

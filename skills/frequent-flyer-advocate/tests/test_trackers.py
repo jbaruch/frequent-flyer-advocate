@@ -220,6 +220,21 @@ def test_init_default_refuses_regular_file_without_crashing():
         assert "traceback" not in r.stderr.lower(), f"{script}: crashed instead of clean error:\n{r.stderr}"
 
 
+def test_init_empty_or_whitespace_path_is_rejected():
+    # `init --path ""` (and whitespace-only) must reach the self-error-handled diagnostic, not
+    # fall through to the interactive branch: cmd_init dispatches on presence, not truthiness.
+    for script, sub, read_cmd in STORES:
+        for bad in ["", "   "]:
+            home = fresh_home()
+            r = run(script, ["init", "--path", bad], home, stdin_text="")
+            assert r.returncode == 1, \
+                f"{script}: init --path {bad!r} should exit 1, got {r.returncode}\n{r.stdout}{r.stderr}"
+            assert "no path" in r.stderr.lower(), f"{script}: {bad!r}: {r.stderr}"
+            assert not os.path.lexists(store_path(home, sub)), \
+                f"{script}: init --path {bad!r} must not create a store"
+            assert "traceback" not in r.stderr.lower(), f"{script}: crashed:\n{r.stderr}"
+
+
 def test_init_path_refuses_existing_file():
     # A plain file at the --path target would make os.makedirs(exist_ok=True) raise an
     # opaque FileExistsError — init must refuse with an actionable message, not crash.
