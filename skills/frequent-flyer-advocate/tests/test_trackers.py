@@ -352,6 +352,24 @@ def test_check_surfaces_hotel_credit_for_hotel_scenario():
     assert "Canceled BNA-JFK" not in r.stdout, f"airline credit must NOT surface for a hotel scenario:\n{r.stdout}"
 
 
+def test_mixed_issuer_credit_surfaces_on_each_dimension():
+    # Regression (#15): a credit carrying BOTH --airline and --brand must match each issuer
+    # dimension independently — it surfaces for an airline scenario on its airline AND for a
+    # hotel scenario on its brand. The earlier brand gate made the two mutually exclusive, so
+    # a both-tagged credit vanished from airline scenarios.
+    home = fresh_home()
+    assert run(CREDITS, ["init", "--default"], home).returncode == 0
+    assert run(CREDITS, ["add", "--type", "VOUCHER", "--desc", "Co-branded stay credit",
+                         "--value", "250", "--passenger", "Baruch",
+                         "--airline", "DL", "--brand", "Hilton"], home).returncode == 0
+    airline = run(CREDITS, ["check", "--scenario", "Delta business JFK-CDG"], home)
+    assert airline.returncode == 0 and "Co-branded stay credit" in airline.stdout, \
+        f"a DL+Hilton credit must surface for an airline scenario on its airline dimension:\n{airline.stdout}"
+    hotel = run(CREDITS, ["check", "--scenario", "Hilton London, 2 nights"], home)
+    assert hotel.returncode == 0 and "Co-branded stay credit" in hotel.stdout, \
+        f"the same credit must surface for a hotel scenario on its brand dimension:\n{hotel.stdout}"
+
+
 def test_check_brand_alias_matches_parent_chain():
     # A sub-brand named in the scenario (Conrad) must surface a credit tagged with the chain.
     home = _seeded_home_with_hotel_and_airline_credits()

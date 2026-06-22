@@ -820,12 +820,8 @@ def cmd_expiring(args):
             urgency = f"⏰ {days_left} days left"
 
         pax = c.get("passenger", "?")
-        airline = c.get("airline", "")
-        airline_str = f" ({airline})" if airline else ""
-        brand = c.get("brand", "")
-        brand_str = f" | Brand: {normalize_brand(brand)}" if brand else ""
         print(f"  #{c['id']} [{c['type']}] {c['description']}")
-        print(f"     Passenger: {pax} | Airline: {airline_str or '—'}{brand_str} | Value: {c.get('value', '?')}")
+        print(f"     Passenger: {pax} | {_issuer_label(c)} | Value: {c.get('value', '?')}")
         print(f"     Expiry: {c['expiry']} | {urgency}")
         if "restrictions" in c:
             print(f"     Restrictions: {c['restrictions']}")
@@ -893,55 +889,58 @@ def cmd_check(args):
         ctype = c["type"]
         reasons = []
 
-        if credit_brand:
-            # A brand-tagged credit is a hotel/program credit — match it ONLY by brand.
-            # The airline-era heuristics below key off scenario words ("business", "domestic",
-            # "companion") and the AMEX always-on note, none of which know about the issuer;
-            # routing a hotel credit through them would surface it in an unrelated airline
-            # scenario. Brand match is the single gate for the entire --brand surface, every
-            # credit type, not just VOUCHER.
-            if credit_brand in scenario_hotels:
-                reasons.append(f"{TYPE_LABELS.get(ctype, ctype)} — {c.get('value', '?')} valid at {credit_brand}")
+        # Brand (hotel/program) dimension — a credit tagged with --brand surfaces for a matching
+        # hotel scenario. This is additive, not exclusive: a credit carrying BOTH --airline and
+        # --brand also runs through the airline heuristics below, so it still matches airline
+        # scenarios on its airline dimension rather than vanishing from them.
+        if credit_brand and credit_brand in scenario_hotels:
+            reasons.append(f"{TYPE_LABELS.get(ctype, ctype)} — {c.get('value', '?')} valid at {credit_brand}")
 
-        elif ctype == "GUC":
-            if any(w in scenario for w in ["international", "transatlantic", "transpacific",
-                                            "tatl", "tpac", "delta one", "business"]):
-                if "DL" in scenario_airlines:
-                    reasons.append("GUC can upgrade to Delta One on DL-operated international")
-                else:
-                    reasons.append("GUC available — but only on DL-operated flights (check if applicable)")
+        # Airline dimension — skip ONLY for a brand-only credit (brand set, no airline). A pure
+        # hotel credit must not run through the airline-era heuristics: they key off scenario
+        # words ("business", "domestic", "companion") and the AMEX always-on note, none of which
+        # know the issuer, so routing a hotel credit through them would surface it in an unrelated
+        # airline scenario. A credit with both issuers, or with neither, still matches here.
+        if credit_airline or not credit_brand:
+            if ctype == "GUC":
+                if any(w in scenario for w in ["international", "transatlantic", "transpacific",
+                                                "tatl", "tpac", "delta one", "business"]):
+                    if "DL" in scenario_airlines:
+                        reasons.append("GUC can upgrade to Delta One on DL-operated international")
+                    else:
+                        reasons.append("GUC available — but only on DL-operated flights (check if applicable)")
 
-        elif ctype == "RUC":
-            if any(w in scenario for w in ["domestic", "repositioning", "repo", "bna"]):
-                if "DL" in scenario_airlines:
-                    reasons.append("RUC can upgrade repositioning to First on DL domestic")
-                else:
-                    reasons.append("RUC available — only on DL-operated domestic (check if applicable)")
+            elif ctype == "RUC":
+                if any(w in scenario for w in ["domestic", "repositioning", "repo", "bna"]):
+                    if "DL" in scenario_airlines:
+                        reasons.append("RUC can upgrade repositioning to First on DL domestic")
+                    else:
+                        reasons.append("RUC available — only on DL-operated domestic (check if applicable)")
 
-        elif ctype == "COMP":
-            if any(w in scenario for w in ["round-trip", "round trip", "domestic", "companion"]):
-                reasons.append("Companion certificate may apply — check route restrictions")
+            elif ctype == "COMP":
+                if any(w in scenario for w in ["round-trip", "round trip", "domestic", "companion"]):
+                    reasons.append("Companion certificate may apply — check route restrictions")
 
-        elif ctype in ("ECREDIT", "VOUCHER"):
-            # Match if the credit's airline matches any airline in the scenario
-            if credit_airline and credit_airline in scenario_airlines:
-                label = "eCredit" if ctype == "ECREDIT" else "Voucher"
-                reasons.append(f"{label} ${c.get('value', '?')} valid on {credit_airline}")
-            elif not credit_airline:
-                # No airline (and, in this branch, no brand) on the credit — flag it manually.
-                reasons.append(f"{c['type']} ${c.get('value', '?')} — airline not specified, check manually")
+            elif ctype in ("ECREDIT", "VOUCHER"):
+                # Match if the credit's airline matches any airline in the scenario
+                if credit_airline and credit_airline in scenario_airlines:
+                    label = "eCredit" if ctype == "ECREDIT" else "Voucher"
+                    reasons.append(f"{label} ${c.get('value', '?')} valid on {credit_airline}")
+                elif not credit_airline:
+                    # No airline (and, since we're in this branch, no brand) on the credit.
+                    reasons.append(f"{c['type']} ${c.get('value', '?')} — airline not specified, check manually")
 
-        elif ctype == "PARTNER":
-            if credit_airline and credit_airline in scenario_airlines:
-                reasons.append(f"Partner credit valid on {credit_airline}")
+            elif ctype == "PARTNER":
+                if credit_airline and credit_airline in scenario_airlines:
+                    reasons.append(f"Partner credit valid on {credit_airline}")
 
-        elif ctype == "AMEX":
-            reasons.append("Amex travel credit may offset cost — check card benefit rules")
+            elif ctype == "AMEX":
+                reasons.append("Amex travel credit may offset cost — check card benefit rules")
 
-        elif ctype == "OTHER":
-            # Gift cards, misc credits — match by airline
-            if credit_airline and credit_airline in scenario_airlines:
-                reasons.append(f"{c.get('description', 'Credit')} — ${c.get('value', '?')} valid on {credit_airline}")
+            elif ctype == "OTHER":
+                # Gift cards, misc credits — match by airline
+                if credit_airline and credit_airline in scenario_airlines:
+                    reasons.append(f"{c.get('description', 'Credit')} — ${c.get('value', '?')} valid on {credit_airline}")
 
         if reasons:
             applicable.append((c, reasons, pax_in_filter))
