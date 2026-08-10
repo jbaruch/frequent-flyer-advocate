@@ -152,8 +152,9 @@ relevant.
 
 ### When you have enough
 
-Summarize what you understand back to the user and confirm. Then proceed immediately to
-Step 4.
+Summarize what you understand back to the user, then proceed immediately to Step 4 — the
+summary is a statement, not a checkpoint. Ask one question first only where a detail is
+missing or self-contradictory and its answer changes the letter.
 
 ---
 
@@ -323,12 +324,17 @@ python3 <this-skill-dir>/scripts/letter-fit.py --airline <code> --file <draft-pa
 Exit 0 means it fits, 1 means it overflows, 2 means the invocation or metadata is wrong. The
 script emits a JSON report; read the verdict from it rather than recomputing anything.
 
+Presenting requires **both** exit 0 and an empty `formatting_warnings` array. Exit 0 alone is
+not enough — the script exits 0 on a letter that fits while still carrying markup the form
+would render literally.
+
 - **Exit 1** — trim and rerun. Do not show the user an overflowing draft.
-- **`formatting_warnings` non-empty** — strip the flagged markup and rerun.
-- **Exit 0** — present the letter. Quote `effective_count`, `char_limit`, and `status` from
-  the report; never substitute a count of your own. Where `count_verified` is `false`, tell
-  the user the count is unverified — the form's own counter is the final word, and a draft
-  measuring close to the limit may still be rejected by it.
+- **Exit 0, `formatting_warnings` non-empty** — strip the flagged markup and rerun. Do not
+  present the draft on this pass.
+- **Exit 0, `formatting_warnings` empty** — present the letter. Quote `effective_count`,
+  `char_limit`, and `status` from the report; never substitute a count of your own. Where
+  `count_verified` is `false`, tell the user the count is unverified — the form's own counter
+  is the final word, and a draft measuring close to the limit may still be rejected by it.
 - **Exit 2** — fix what the stderr message names, then rerun. Never fall back to counting
   by hand.
 

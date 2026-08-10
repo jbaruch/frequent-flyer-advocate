@@ -11,7 +11,7 @@
   - Exit codes: 0 fits, 1 overflows, 2 argument or metadata error. `--limit N` measures an airline the metadata does not record; `--info` and `--list-airlines` need no letter; `--metadata` points at another copy of the data file.
   - stdout is JSON in every mode, per `script-delegation` "JSON-producing: output structured data, not prose". The script measures and the skill renders; `worst_count` and `effective_count` ship precomputed so no caller does arithmetic the script exists to prevent.
   - Seed metadata covers AA (1500-char web form, five prefilled fields, executive-office paper address) and WN (2500-char web form). Both limits carry `limit_verified` + `limit_source`; nothing is recorded that was not observed.
-- `tests/test_letter_fit.py`: 33 outcome-focused cases covering counting, the inflation margin, the `--limit` override, formatting detection, input handling, error paths, and a provenance check over the shipped metadata. The reported Southwest draft is pinned as a regression test. Deterministic — fixed inputs, no clock, no network.
+- `tests/test_letter_fit.py`: 35 outcome-focused cases covering counting, the inflation margin, the `--limit` override, formatting detection, input handling, error paths, and a provenance check over the shipped metadata. The reported Southwest draft is pinned as a regression test. Deterministic — fixed inputs, no clock, no network.
 
 ### Changed
 
