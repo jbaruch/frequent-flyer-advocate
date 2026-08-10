@@ -13,6 +13,7 @@ Also discoverable by pytest (test_* functions).
 import atexit
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -427,19 +428,70 @@ def test_info_on_an_unknown_airline_is_rejected():
 
 # ── the shipped metadata itself ───────────────────────────────────────────────
 
+def test_every_reference_is_reachable_and_every_link_resolves():
+    """A reference nobody links to is dead weight; a link to nothing is a broken step.
+
+    SKILL.md is the execution plan and the reference files carry the detail moved off it
+    (skill-authoring Keep Skills Compact), so the two have to stay wired together.
+    """
+    skill_dir = os.path.normpath(os.path.join(HERE, ".."))
+    references = os.path.join(skill_dir, "references")
+    on_disk = {f for f in os.listdir(references) if f.endswith(".md")}
+    assert on_disk, "no reference files found — the check would pass vacuously"
+
+    # Resolve each link relative to the file it sits in, not to the skill root. A link
+    # copied from SKILL.md into a reference keeps its `references/` prefix and then
+    # points at references/references/… — which a root-relative check cannot see.
+    surfaces = [os.path.join(skill_dir, "SKILL.md")]
+    surfaces += sorted(os.path.join(references, f) for f in on_disk)
+    broken, checked, linked_from_skill = [], 0, set()
+    for path in surfaces:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        for link in re.findall(r"\]\(([^)]+\.md)\)", text):
+            checked += 1
+            target = os.path.normpath(os.path.join(os.path.dirname(path), link))
+            if not os.path.isfile(target):
+                broken.append(f"{os.path.basename(path)} -> {link}")
+                continue
+            if os.path.basename(path) == "SKILL.md" \
+                    and os.path.dirname(target) == references:
+                linked_from_skill.add(os.path.basename(target))
+    assert checked, "no markdown links found — the check would pass vacuously"
+    assert not broken, f"links that do not resolve from their own file: {broken}"
+
+    # Reachability is asserted from resolved link destinations, not from the filename
+    # appearing somewhere in the text — prose mentioning a reference is not a link to it.
+    orphans = sorted(on_disk - linked_from_skill)
+    assert not orphans, f"reference files SKILL.md does not link to: {orphans}"
+
+
 def test_skill_invocations_use_the_plugin_mount_path():
     # skill-authoring Script References: step bodies carry the path that resolves at the
     # invocation site, one convention per SKILL.md. A placeholder or a bare repo-relative
     # path fails when a consumer copies the command as written.
-    skill = os.path.normpath(os.path.join(HERE, "..", "SKILL.md"))
-    with open(skill, encoding="utf-8") as f:
-        text = f.read()
-    assert "<this-skill-dir>" not in text, "unresolved placeholder left in a step body"
+    # Every loaded surface, not just SKILL.md: reference files carry invocations too, and
+    # moving a command into one must not move it out from under this guard.
+    skill_dir = os.path.normpath(os.path.join(HERE, ".."))
+    surfaces = [os.path.join(skill_dir, "SKILL.md")]
+    references = os.path.join(skill_dir, "references")
+    surfaces += sorted(os.path.join(references, f) for f in os.listdir(references)
+                       if f.endswith(".md"))
+
     mount = ".tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate"
-    for line in text.split("\n"):
-        if "python3 " not in line:
-            continue
-        assert mount in line, f"invocation does not use the mount path:\n  {line.strip()}"
+    checked = 0
+    for path in surfaces:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        assert "<this-skill-dir>" not in text, f"unresolved placeholder in {path}"
+        for line in text.split("\n"):
+            if "python3 " not in line:
+                continue
+            checked += 1
+            assert mount in line, (
+                f"invocation does not use the mount path in {os.path.basename(path)}:"
+                f"\n  {line.strip()}")
+    assert checked, "no invocations found — the guard would pass vacuously"
 
 
 def test_every_failure_mode_emits_a_structured_error_on_stdout():
