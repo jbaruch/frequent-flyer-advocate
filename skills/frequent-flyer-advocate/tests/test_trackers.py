@@ -1871,7 +1871,7 @@ _V1_STORE_ARCHIVED_DEPOSITS = """# Travel Credits Inventory
 ### #9 — [ECREDIT] Canceled BNA-JFK
 - **Schema version**: 1
 - **Value**: 347.20
-- **Expiry**: 2027-12-15
+- **Expiry**: 2024-12-15
 - **Airline**: DL
 - **Added**: 2026-02-01
 <!-- CREDITS_END — do not edit this marker -->
