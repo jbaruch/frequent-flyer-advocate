@@ -1311,13 +1311,13 @@ def test_update_fills_in_details_that_arrive_later():
     """
     home = _voucher_home("update-later-")
     payload = _json_out(run(CREDITS, ["update", "--json", "--id", "1",
-                                      "--expiry", "2027-06-30",
+                                      "--expiry", "2024-06-30",
                                       "--confirmation", "BA-VCH-99812",
                                       "--restrictions", "Non-transferable"], home))
     assert payload["fields_changed"] == ["Confirmation", "Expiry", "Restrictions"], payload
 
     credit = _json_out(run(CREDITS, ["list", "--json"], home))["credits"][0]
-    assert credit["expiry"] == "2027-06-30"
+    assert credit["expiry"] == "2024-06-30"
     assert credit["confirmation"] == "BA-VCH-99812"
     assert credit["restrictions"] == "Non-transferable"
     assert credit["value"] == "150.00", "an omitted field must be preserved, not cleared"
@@ -1405,7 +1405,7 @@ def test_update_reaches_a_deposit_but_still_refuses_an_expiry():
     assert _json_out(run(CREDITS, ["history", "--json"], home))["deposits"][0]["confirmation"] \
         == "Case 19912032"
 
-    r = run(CREDITS, ["update", "--json", "--id", "1", "--expiry", "2027-01-01"], home)
+    r = run(CREDITS, ["update", "--json", "--id", "1", "--expiry", "2024-01-01"], home)
     assert r.returncode != 0
     assert _json_out(r)["error"] == "expiry_not_valid_for_deposit", r.stdout
 
@@ -1423,9 +1423,9 @@ def test_a_newline_in_a_value_cannot_inject_record_structure():
     injections = [
         (["update", "--json", "--id", "1", "--description",
           "Pwned\n\n### #99 — [ECREDIT] Injected\n- **Value**: 99999.00"], "description"),
-        (["update", "--json", "--id", "1", "--value", "5.00\n- **Expiry**: 2099-01-01"], "value"),
+        (["update", "--json", "--id", "1", "--value", "5.00\n- **Expiry**: 2024-01-01"], "value"),
         (["add", "--json", "--type", "VOUCHER", "--desc", "Second",
-          "--value", "5.00\n- **Expiry**: 2099-01-01"], "value"),
+          "--value", "5.00\n- **Expiry**: 2024-01-01"], "value"),
         (["add", "--json", "--type", "VOUCHER", "--desc",
           "X\n### #98 — [ECREDIT] Injected", "--value", "1.00"], "description"),
         (["use", "--json", "--id", "1", "--note", "ok\n- **Value**: 0"], "note"),
