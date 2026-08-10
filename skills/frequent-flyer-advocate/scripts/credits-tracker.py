@@ -1406,6 +1406,149 @@ def cmd_use(args):
         print(f"   Note: {args.note}")
 
 
+# --flag -> field label, for `update`. The label is what the record carries and what
+# parse_credits() lowercases into a key.
+UPDATABLE_FIELDS = {
+    "value": "Value",
+    "expiry": "Expiry",
+    "passenger": "Passenger",
+    "airline": "Airline",
+    "brand": "Brand",
+    "confirmation": "Confirmation",
+    "restrictions": "Restrictions",
+}
+
+
+def apply_field_updates(body, updates, indent):
+    """Set each named field on a record's body lines, returning the new body.
+
+    A text-level edit, for the same reason the migration is one: reserializing through
+    format_credit() would write only the ten fields it knows and silently drop anything
+    else the record carries. An existing field is replaced where it sits, preserving its
+    indentation; a new one is appended after the last recognized field line.
+    """
+    out, seen = [], set()
+    for line in body:
+        kv = re.match(r"- \*\*(.+?)\*\*:\s*(.*)", line.strip())
+        label = kv.group(1) if kv else None
+        if label in updates:
+            line_indent = line[:len(line) - len(line.lstrip())]
+            out.append(f"{line_indent}- **{label}**: {updates[label]}")
+            seen.add(label)
+            continue
+        out.append(line)
+
+    missing = [(label, value) for label, value in updates.items() if label not in seen]
+    if not missing:
+        return out
+
+    # Append after the last field line so a new field lands inside the record rather
+    # than after whatever blank lines trail it.
+    last_field = max((i for i, ln in enumerate(out)
+                      if re.match(r"- \*\*(.+?)\*\*:", ln.strip())), default=-1)
+    additions = [f"{indent}- **{label}**: {value}" for label, value in missing]
+    return out[:last_field + 1] + additions + out[last_field + 1:]
+
+
+def cmd_update(args):
+    """Edit an existing record's fields in place.
+
+    The workflow this exists for: an airline confirms compensation and the expiry,
+    voucher number, PIN, and restrictions arrive minutes-to-days later in a second
+    email. Without this the only options were hand-editing a file whose header forbids
+    it, or `use`-ing the half-entered record and re-adding it — which pollutes the
+    archive with a ghost and burns an id.
+    """
+    content = read_inventory()
+
+    updates = {}
+    for flag, label in UPDATABLE_FIELDS.items():
+        value = getattr(args, flag, None)
+        if value is not None:
+            updates[label] = normalize_brand(value) if flag == "brand" else value
+
+    if not updates and args.description is None:
+        print("ERROR: update needs at least one field to change. See --help.", file=sys.stderr)
+        if args.json:
+            emit_json({"error": "no_fields_given", "id": args.id,
+                       "updatable": sorted(UPDATABLE_FIELDS) + ["description"]})
+        sys.exit(1)
+
+    if args.expiry is not None:
+        try:
+            datetime.strptime(args.expiry, "%Y-%m-%d")
+        except ValueError:
+            print(f"ERROR: Invalid --expiry '{args.expiry}'. Expected YYYY-MM-DD.",
+                  file=sys.stderr)
+            if args.json:
+                emit_json({"error": "invalid_expiry", "given": args.expiry,
+                           "expected_format": "YYYY-MM-DD"})
+            sys.exit(1)
+
+    # Active and compensation hold current records. The archive holds settled ones —
+    # `use` already recorded their outcome, and editing them would rewrite history
+    # rather than complete it.
+    for section in ("active", "compensation"):
+        start_marker, end_marker = section_markers(section)
+        if content.find(start_marker) == -1 or content.find(end_marker) == -1:
+            continue
+        block_start = content.index("\n", content.find(start_marker)) + 1
+        block = content[block_start:content.find(end_marker)]
+        preamble, records = split_records(block)
+
+        for position, (heading, body) in enumerate(records):
+            match = re.match(r"(\s*### #(\d+)\s*[—–-]\s*)\[([A-Z]+)\](.*)", heading)
+            if match is None or int(match.group(2)) != args.id:
+                continue
+
+            ctype = match.group(3)
+            if ctype in DEPOSIT_TYPES and "Expiry" in updates:
+                print(f"ERROR: --expiry is not valid for {ctype}. A deposit lands in the "
+                      f"loyalty account on grant and has no expiry of its own.", file=sys.stderr)
+                if args.json:
+                    emit_json({"error": "expiry_not_valid_for_deposit", "id": args.id,
+                               "given_type": ctype})
+                sys.exit(1)
+
+            new_heading = heading
+            if args.description is not None:
+                new_heading = f"{match.group(1)}[{ctype}] {args.description}"
+            new_body = apply_field_updates(body, updates, _indent_of(heading))
+
+            records[position] = (new_heading, new_body)
+            rendered = list(preamble)
+            for h, b in records:
+                rendered.append(h)
+                rendered.extend(b)
+            write_inventory(replace_section_block(content, section, "\n".join(rendered)))
+
+            changed = sorted(updates) + (["Description"] if args.description is not None else [])
+            description = args.description if args.description is not None else match.group(4).strip()
+            if args.json:
+                emit_json({"updated": {"id": args.id, "type": ctype,
+                                       "description": description, "section": section},
+                           "fields_changed": changed})
+                return
+            print(f"✅ Updated credit #{args.id}: [{ctype}] {description}")
+            print(f"   Changed: {', '.join(changed)}")
+            return
+
+    # Name the archive explicitly when that is where the record actually is — "not
+    # found" would send the caller looking for a record that is sitting right there.
+    archived = [c["id"] for c in parse_credits(content, "archive")]
+    if args.id in archived:
+        print(f"ERROR: Credit #{args.id} is archived. `update` edits current records; a "
+              f"settled one keeps the outcome `use` recorded.", file=sys.stderr)
+        if args.json:
+            emit_json({"error": "record_is_archived", "id": args.id})
+        sys.exit(1)
+
+    print(f"ERROR: Credit #{args.id} not found.", file=sys.stderr)
+    if args.json:
+        emit_json({"error": "not_found", "id": args.id})
+    sys.exit(1)
+
+
 def cmd_history(args):
     """Report deposited compensation — the events, not the inventory.
 
@@ -1932,6 +2075,18 @@ Examples:
     # migrate — owner-skill operation, see cmd_migrate()
     sub.add_parser("migrate", help="Bring every record up to the current schema version (owner skill only)", parents=[common])
 
+    # update — edit an existing record's fields, see cmd_update()
+    upd = sub.add_parser("update", help="Edit fields on an existing credit (details that arrive later)", parents=[common])
+    upd.add_argument("--id", type=int, required=True, help="Credit ID to update")
+    upd.add_argument("--description", help="Replace the description")
+    upd.add_argument("--value", help="Replace the value")
+    upd.add_argument("--expiry", help="Set the expiry (YYYY-MM-DD)")
+    upd.add_argument("--passenger", help="Set the passenger")
+    upd.add_argument("--airline", help="Set the airline code")
+    upd.add_argument("--brand", help="Set the hotel/loyalty brand")
+    upd.add_argument("--confirmation", help="Set the confirmation or case number")
+    upd.add_argument("--restrictions", help="Set the restrictions text")
+
     # history — deposited compensation, see cmd_history()
     hist = sub.add_parser("history", help="Show deposited compensation (miles/points grants) — history, not inventory", parents=[common])
     hist.add_argument("--airline", help="Filter by airline code")
@@ -1960,6 +2115,7 @@ Examples:
             "status": cmd_status,
             "migrate": cmd_migrate,
             "history": cmd_history,
+            "update": cmd_update,
         }[args.command](args)
     except SystemExit as exc:
         # Any exit that skipped emit_json still owes the caller an object: under

@@ -7,7 +7,7 @@ description: >
   carrier and brand. Actions: check store readiness and bootstrap it; migrate
   the store to the current record shape; list credits; show what is expiring;
   match credits against a booking scenario; show compensation history; add a
-  credit; mark one used; handle errors. Use whenever a question turns on what
+  credit; update one; mark one used; handle errors. Use whenever a question turns on what
   credits, vouchers, or certificates are on hand — before searching flights,
   when presenting an itinerary, after a booking, or when an airline grants
   compensation.
@@ -19,7 +19,7 @@ This skill is an action router — pick the step that matches the user's intent
 and execute only that step. Do not run other steps; do not parallelize.
 Explicit chains:
 
-- Steps 3-9 all touch the store — run Step 1 first when readiness is unknown
+- Steps 3-10 all touch the store — run Step 1 first when readiness is unknown
 - Step 1 is both an action and a prerequisite, and the two do not chain alike:
   - Invoked directly, when readiness itself is what the user asked about, it
     reports the state and finishes. It never continues to Step 3, and never to
@@ -27,19 +27,19 @@ Explicit chains:
     would loop
   - Reached as a prerequisite to another step, exiting `0` continues to Step 3
     and from there to the step that needed it
-- Step 1 exiting non-zero continues to Step 10, either way
-- Steps 4-9 run Step 3 first: this skill owns the record shape, so it migrates
+- Step 1 exiting non-zero continues to Step 11, either way
+- Steps 4-10 run Step 3 first: this skill owns the record shape, so it migrates
   what it is about to read or write. Step 3 is idempotent, so on a current store
   this costs one call and changes nothing
 - Step 3 continues to the calling step only when its `unconsumable` count is
   zero. Records the reader cannot consume mean every later command returns a
-  subset, so it continues to Step 10 and stops instead
+  subset, so it continues to Step 11 and stops instead
 - Step 3 invoked directly finishes there
-- Step 10 chains back exactly once, to Step 2, and only for a missing store
+- Step 11 chains back exactly once, to Step 2, and only for a missing store
 - Step 2 re-runs Step 1 once and routes it on the original request, the same
   split as above; it never loops
-- Any step reporting a failure continues to Step 10 (Handle Errors)
-- Every other Step 10 branch finishes without chaining
+- Any step reporting a failure continues to Step 11 (Handle Errors)
+- Every other Step 11 branch finishes without chaining
 
 This skill is the owner of the inventory artifact. Shape changes to the store
 belong to it and to no other skill, and Step 3 is the only place a migration
@@ -80,12 +80,12 @@ Branch on the exit code, never on the printed wording:
 
 - `0` — store ready. Invoked directly, report that and finish here. Reached as a
   prerequisite, continue to Step 3 and from there to the step that needed it
-- `3` — no store. Continue to Step 10, then return here
-- `4` — store unusable. Continue to Step 10; do not bootstrap over it
+- `3` — no store. Continue to Step 11, then return here
+- `4` — store unusable. Continue to Step 11; do not bootstrap over it
 
 ## Step 2 — Bootstrap the Store
 
-Reached from Step 10 after an exit `3`, with the user's choice already made.
+Reached from Step 11 after an exit `3`, with the user's choice already made.
 Never pick the choice for them.
 
 ```bash
@@ -99,7 +99,7 @@ creates one elsewhere and symlinks it back.
 Re-run Step 1 once, and route on the original request. Exit `0` reports the
 store ready and finishes when readiness itself is what the user asked about;
 otherwise it continues to Step 3 and from there to the step that needed the
-store. Anything else continues to Step 10 and does not return — a bootstrap that
+store. Anything else continues to Step 11 and does not return — a bootstrap that
 did not take is reported, never retried.
 
 ## Step 3 — Migrate the Store
@@ -111,7 +111,7 @@ python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-adv
 ```
 
 This skill owns the record shape, so it upgrades records before consuming them
-rather than reading them at a version it has moved past. That is why Steps 4-9
+rather than reading them at a version it has moved past. That is why Steps 4-10
 run this first — the owner migrates what it is about to read or write.
 
 Other skills write to this store through the same script, and their writes
@@ -129,10 +129,10 @@ and `unreadable` explain it: records written by a newer version of the plugin,
 and records whose version line does not parse. Migration leaves both alone by
 design, and every later command omits them.
 
-- `unconsumable` zero — the store is wholly readable. Reached from Steps 4-9,
+- `unconsumable` zero — the store is wholly readable. Reached from Steps 4-10,
   continue to the step that called it. Invoked directly, report the counts and
   finish here
-- `unconsumable` above zero — continue to Step 10 and stop. Do not fall through to
+- `unconsumable` above zero — continue to Step 11 and stop. Do not fall through to
   the calling step: `list`, `expiring`, and `check` would return a subset while
   reading as the whole store, and `add` would write against an inventory it
   cannot fully see
@@ -226,7 +226,22 @@ reading.
 An airline's offer is not a credit until it exists. Add it when the user
 confirms they hold it, never from an alert or a promise. Finish here.
 
-## Step 9 — Mark a Credit Used
+## Step 9 — Update a Credit
+
+Run Step 3 first — the owner migrates the store before it reads or writes it.
+
+```bash
+python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py update --json --id <N> --expiry <date> --confirmation "..."
+```
+
+For details that arrive after the credit was logged — an expiry, a voucher number, a
+case reference, restrictions. Pass only the fields that changed; the rest are left as
+they are. At least one is required.
+
+`fields_changed` echoes what was written. A record already marked used cannot be
+edited; the payload says so rather than reporting it missing. Finish here.
+
+## Step 10 — Mark a Credit Used
 
 Run Step 3 first — the owner migrates the store before it reads or writes it.
 
@@ -242,7 +257,7 @@ There is no reverse subcommand. Confirm with the user that the credit was
 actually applied before writing; a wrong `use` is undone by hand-editing the
 store, which this skill forbids. Finish here.
 
-## Step 10 — Handle Errors
+## Step 11 — Handle Errors
 
 - Exit `3`, no store at the path. Ask the user which bootstrap they want, then
   continue to Step 2 to run it. Never create one unasked: a store may exist
@@ -262,7 +277,7 @@ store, which this skill forbids. Finish here.
 - Step 3 reported `unconsumable` above zero with both other counts at zero.
   Records exist that the reader drops for a reason migration did not classify.
   Report the count and stop; do not present the partial inventory as the store.
-- Unknown `--id` on Step 9. The id is not in the active section. The usual cause
+- Unknown `--id` on Step 10. The id is not in the active section. The usual cause
   is a credit already marked used, which now sits in the archive under that same
   id — ids are stable and a record keeps its own through archiving. Report that
   and stop; listing the active credits is Step 4, on the user's next ask.

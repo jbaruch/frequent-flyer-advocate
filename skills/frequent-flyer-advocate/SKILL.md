@@ -443,7 +443,7 @@ After the letter is finalized, always file it:
 
 If the user returns with a compensation outcome, log it in both systems.
 
-Read `--help` for the accepted `--type` set and pick by what the airline actually gave. Never infer a type from what an abbreviation looks like it spells; `--help` carries each type's meaning, and an abbreviation's plain-English reading is not it.
+Read `--help` for the accepted `--type` set and pick by what the airline actually gave. Never infer a type from what an abbreviation looks like it spells.
 
 `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py add --json --type <TYPE> --description "..." --value <amount> --passenger "..." --airline <code> --expiry <date> --restrictions "..."`
 Returns `{"added": {…the stored record…}, "days_to_expiry": <int|null>}`. Every failure exits non-zero and writes nothing:

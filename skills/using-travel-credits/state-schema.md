@@ -62,7 +62,7 @@ The heading and `Schema version` are always written. Every other field is writte
 
 | Skill | Role | Operations |
 |---|---|---|
-| `using-travel-credits` | owner, writer, reader | `status`, `link`, `init`, `migrate`, `list`, `expiring`, `check`, `history`, `add`, `use` |
+| `using-travel-credits` | owner, writer, reader | `status`, `link`, `init`, `migrate`, `list`, `expiring`, `check`, `history`, `add`, `update`, `use` |
 | `frequent-flyer-advocate` | writer, caller | writes granted compensation with a direct `add`; reads Active and Compensation History through this skill's list and history actions, never directly |
 | `jbaruch/jbaruch-travel-policy` | caller | reaches every operation through this skill; ships no tracker of its own since its 0.7.43 |
 
