@@ -480,6 +480,62 @@ def test_unknown_airline_error_names_what_is_known():
     assert payload["known"] == ["AA", "WN"], payload
 
 
+def test_valid_json_of_the_wrong_shape_is_rejected():
+    # Parsing is not validation: `[]` parses fine and then blows up on md.get(...) with a
+    # traceback and empty stdout — the one contract this script promises never to break.
+    d = _mktemp("ffa-shape-")
+    letter = write_letter(PLAIN_LETTER)
+    shapes = [
+        ("[]", "the root value"),
+        ('"a string"', "the root value"),
+        ('{"airlines": []}', "airlines"),
+        ('{"airlines": {"ZZ": 5}}', "airlines.ZZ"),
+        ('{"airlines": {"ZZ": {"channels": []}}}', "airlines.ZZ.channels"),
+        ('{"airlines": {"ZZ": {"channels": {"web_form": "nope"}}}}',
+         "airlines.ZZ.channels.web_form"),
+        ('{"airlines": {"ZZ": {"channels": {"web_form": {"char_limit": "lots"}}}}}',
+         "airlines.ZZ.channels.web_form.char_limit"),
+        ('{"airlines": {"ZZ": {"channels": {"web_form": {"formatting": 3}}}}}',
+         "airlines.ZZ.channels.web_form.formatting"),
+        ('{"airlines": {"ZZ": {"channels": {"web_form": {"observed_inflation": "x"}}}}}',
+         "airlines.ZZ.channels.web_form.observed_inflation"),
+    ]
+    for i, (body, where) in enumerate(shapes):
+        path = os.path.join(d, f"shape-{i}.json")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(body)
+        payload = failure(["--airline", "ZZ", "--metadata", path, "--file", letter])
+        assert payload["error"] == "metadata_invalid_shape", f"{body}: {payload}"
+        assert payload["at"] == where, f"{body}: wanted {where}, got {payload['at']}"
+
+
+def test_boolean_char_limit_is_a_shape_error_not_a_count():
+    # bool subclasses int, so a naive isinstance check would accept true as a limit of 1.
+    d = _mktemp("ffa-boollimit-")
+    path = os.path.join(d, "bool.json")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write('{"airlines": {"ZZ": {"channels": {"web_form": {"char_limit": true}}}}}')
+    payload = failure(["--airline", "ZZ", "--metadata", path,
+                       "--file", write_letter(PLAIN_LETTER)])
+    assert payload["error"] == "metadata_invalid_shape", payload
+
+
+def test_wrong_shape_is_caught_in_every_mode():
+    d = _mktemp("ffa-shapemodes-")
+    path = os.path.join(d, "list.json")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("[]")
+    for args in (["--list-airlines"], ["--airline", "AA", "--info"],
+                 ["--airline", "AA", "--file", write_letter(PLAIN_LETTER)]):
+        payload = failure([*args, "--metadata", path])
+        assert payload["error"] == "metadata_invalid_shape", f"{args}: {payload}"
+
+
+def test_shipped_metadata_passes_its_own_validator():
+    r = run(["--list-airlines"])
+    assert r.returncode == FITS, f"the shipped metadata must validate:\n{r.stderr}"
+
+
 def test_skill_does_not_restate_per_airline_metadata():
     # script-as-black-box: SKILL.md names the contract and reads channel_notes at runtime.
     # A per-airline classification copied into skill prose goes stale the moment the

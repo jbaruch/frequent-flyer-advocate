@@ -122,8 +122,9 @@ Run `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flye
 already recorded about that airline's form. It emits JSON; read `metadata.channels` for the
 recorded limit and prefilled fields. Then fill the gaps from the user:
 
-- **Character limit** — ask them to read it off the form. Airlines not in the metadata have
-  none recorded; pass whatever they report to `letter-fit.py --limit <N>` in Step 9.
+- **Character limit** — ask them to read it off the form. Whatever they report is the live
+  value and outranks anything recorded; carry it to `letter-fit.py --limit <N>` in Step 9.
+  A `--info` limit is a prior observation, used only when the user cannot supply one.
 - **Fields the form captures separately** — passenger name, loyalty number, flight number,
   date, route are typical. Anything the form collects is data the letter body can drop.
 
@@ -331,7 +332,7 @@ draft to a file and measure it:
 
 ```bash
 python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/letter-fit.py --airline <code> --file <draft-path>
-# add --limit <N> when Step 3 got a limit for an airline the metadata doesn't record
+# pass --limit <N> whenever Step 3 got a live limit, recorded airline or not
 ```
 
 Exit 0 means it fits, 1 means it overflows, 2 means the invocation or metadata is wrong.
@@ -353,6 +354,8 @@ Presenting requires **both** exit 0 and an empty `formatting_warnings` array.
 Two different numbers can come back from a live form. Keep them apart:
 
 - The **limit** is the form's maximum. `--limit <N>` takes this and nothing else.
+- A limit the user read off the live form supersedes the recorded one. Pass it every
+  time you have it, including for an airline the metadata already covers.
 - The **counter reading** is what the form measured *this draft* at. It is calibration
   evidence for the counting method. Never pass it to `--limit`.
 

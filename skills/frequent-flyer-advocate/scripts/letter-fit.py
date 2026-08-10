@@ -25,8 +25,8 @@ its own. `worst_count` and `effective_count` are precomputed so no caller does t
 A failure reports {"error": <code>, "message": <text>}, plus whatever context the code
 carries (`path`, `known`, `given`, `usage`). Codes: bad_arguments, input_not_found,
 input_not_a_file, input_unreadable, input_not_utf8, empty_letter, metadata_missing,
-metadata_invalid_json, unknown_airline, unknown_channel. Branch on `error` being present,
-never on stderr text.
+metadata_invalid_json, metadata_invalid_shape, unknown_airline, unknown_channel. Branch on
+`error` being present, never on stderr text.
 
 Data lives in airline-form-metadata.json beside this script; --metadata points at another
 copy. Only verified limits belong in it — pass --limit for a form nobody has recorded yet.
@@ -193,10 +193,57 @@ def load_metadata(path):
         "It ships beside this script — restore it from the plugin "
         "(tessl install jbaruch/frequent-flyer-advocate), or point --metadata at your copy.")
     try:
-        return json.loads(raw)
+        md = json.loads(raw)
     except json.JSONDecodeError as e:
         die("metadata_invalid_json",
             f"{path} is not valid JSON ({e}). Fix the file before rerunning.", path=path)
+    validate_metadata(md, path)
+    return md
+
+
+def _bad_shape(path, where, expected, got) -> NoReturn:
+    die("metadata_invalid_shape",
+        f"{path}: {where} must be {expected}, got {type(got).__name__}. "
+        f"Compare it against the shipped airline-form-metadata.json and fix the file.",
+        path=path, at=where, expected=expected)
+
+
+def validate_metadata(md, path):
+    """Reject valid JSON of the wrong shape before any consumer indexes into it.
+
+    Parsing alone is not enough: `[]` is valid JSON, and reaching `md.get(...)` with it
+    raises an AttributeError that escapes as a traceback with stdout empty — the exact
+    contract this script promises never to break. Only the fields consumers actually index
+    are checked; unknown keys pass, so the metadata can grow without a schema bump.
+    """
+    if not isinstance(md, dict):
+        _bad_shape(path, "the root value", "an object", md)
+    airlines = md.get("airlines", {})
+    if not isinstance(airlines, dict):
+        _bad_shape(path, "airlines", "an object keyed by airline code", airlines)
+
+    for code, airline in airlines.items():
+        if not isinstance(airline, dict):
+            _bad_shape(path, f"airlines.{code}", "an object", airline)
+        channels = airline.get("channels", {})
+        if not isinstance(channels, dict):
+            _bad_shape(path, f"airlines.{code}.channels", "an object keyed by channel name",
+                       channels)
+        for name, channel in channels.items():
+            where = f"airlines.{code}.channels.{name}"
+            if not isinstance(channel, dict):
+                _bad_shape(path, where, "an object", channel)
+            limit = channel.get("char_limit")
+            # bool is an int subclass; a true/false limit is a shape error, not a count.
+            if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int)):
+                _bad_shape(path, f"{where}.char_limit", "an integer or null", limit)
+            formatting = channel.get("formatting", {})
+            if not isinstance(formatting, dict):
+                _bad_shape(path, f"{where}.formatting", "an object", formatting)
+            inflation = channel.get("observed_inflation")
+            if inflation is not None and (isinstance(inflation, bool)
+                                          or not isinstance(inflation, (int, float))):
+                _bad_shape(path, f"{where}.observed_inflation", "a number", inflation)
 
 
 def read_letter(args):
