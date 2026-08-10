@@ -874,10 +874,31 @@ def deposit_unit(body_lines):
     return None
 
 
+# A compensation record has no used state (state-schema.md Record Shape), so an
+# archived grant sheds these on the way out. The values are surfaced on the
+# migration's own output rather than discarded quietly — the marking is a record
+# of a redemption that could not have happened, and leaving it on the row would
+# assert that miles sitting in the account had been spent.
+USED_STATE_FIELDS = ("Used date", "Used note")
+
+
+def strip_used_state(body_lines):
+    """Return (kept_lines, {field: value}) for the used-state fields removed."""
+    kept, dropped = [], {}
+    for line in body_lines:
+        m = re.match(r"\s*-\s*\*\*([\w ]+)\*\*:\s*(.*)", line)
+        if m and m.group(1) in USED_STATE_FIELDS:
+            dropped[m.group(1)] = m.group(2).strip()
+            continue
+        kept.append(line)
+    return kept, dropped
+
+
 def relocate_deposits(content, section="active"):
     """Move miles/points grants out of `section` into Compensation History.
 
-    v1 -> v2 for Active; v3 -> v4 for the archive.
+    v1 -> v2 for Active; v3 -> v4 for the archive. Archived rows shed their used
+    state on the way, reported back rather than dropped silently.
 
     They never had a held-then-applied lifecycle — the balance is in the loyalty
     account from the moment of the grant — so Active counted them as available
@@ -912,8 +933,13 @@ def relocate_deposits(content, section="active"):
         if unit is None or match.group(3) in DEPOSIT_TYPES:
             kept.append((heading, body))
             continue
-        moved.append({"id": int(match.group(2)),
-                      "from_type": match.group(3), "to_type": unit})
+        entry = {"id": int(match.group(2)),
+                 "from_type": match.group(3), "to_type": unit}
+        if section == "archive":
+            body, dropped = strip_used_state(body)
+            if dropped:
+                entry["dropped_used_state"] = dropped
+        moved.append(entry)
         moving.append((f"{match.group(1)}[{unit}]{match.group(4)}", body))
 
     if not moving:
@@ -1692,6 +1718,8 @@ def cmd_migrate(args):
     for entry in archived_moved:
         print(f"   Moved #{entry['id']} out of the archive to compensation history: "
               f"[{entry['from_type']}] → [{entry['to_type']}]")
+        for field, value in entry.get("dropped_used_state", {}).items():
+            print(f"      dropped {field}: {value}")
     for entry in renamed:
         print(f"   Renamed #{entry['id']}: [{entry['from_type']}] → [{entry['to_type']}]")
     if unconsumable:

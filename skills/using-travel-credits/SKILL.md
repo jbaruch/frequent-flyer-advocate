@@ -121,7 +121,9 @@ runs.
 
 `deposits_relocated` and `archived_deposits_relocated` list the grants moved into
 Compensation History from Active and from the archive respectively. Report the two
-lists separately.
+lists separately. An archive entry may carry `dropped_used_state`, the used fields
+removed on the way out — surface those values; they are not recoverable from the
+store afterwards.
 
 Idempotent: a store already current reports `changed: false` and is not
 rewritten, so running it ahead of every read costs one call.

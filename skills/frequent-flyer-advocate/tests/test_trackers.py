@@ -1939,17 +1939,34 @@ def test_a_real_companion_cert_stays_in_the_archive():
     assert 3 not in {d["id"] for d in _json_out(run(CREDITS, ["history", "--json"], home))["deposits"]}
 
 
-def test_relocating_an_archived_grant_keeps_the_note_somebody_wrote():
-    """The used fields are wrong about the lifecycle but real as a record.
+def test_relocating_an_archived_grant_sheds_its_used_state():
+    """A compensation record has no used state, so the marking cannot ride along.
 
-    v2 moves a record verbatim apart from its type token; the archive path holds
-    to that rather than dropping fields the current formatter does not emit.
+    Leaving it would assert that miles sitting in the loyalty account had been
+    spent — the same false reading the relocation exists to correct.
     """
-    home = _archived_deposit_store_home("archived-note-")
-    run(CREDITS, ["migrate", "--json"], home)
+    home = _archived_deposit_store_home("archived-strip-")
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+
     with open(os.path.join(home, ".claude", "travel-credits", "inventory.md")) as fh:
         after = fh.read()
-    assert "Reported used by Baruch 2026-08-09" in after, after
+    assert "Reported used by Baruch 2026-08-09" not in after, after
+    assert "**Used date**: 2026-08-09\n- **Passenger**: Baruch Sadogursky" not in after
+
+    # #3 is a genuine cert that stays archived and keeps its own used date.
+    assert "**Used date**" in after, "the untouched archive row lost its used state"
+
+
+def test_the_shed_used_state_is_reported_not_silently_dropped():
+    """Removing a field the operator wrote is auditable or it is data loss."""
+    home = _archived_deposit_store_home("archived-report-")
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+
+    entry = {e["id"]: e for e in payload["archived_deposits_relocated"]}[1]
+    assert entry["dropped_used_state"] == {
+        "Used date": "2026-08-09",
+        "Used note": "Reported used by Baruch 2026-08-09",
+    }, entry
 
 
 def test_archived_grant_never_reappears_as_a_spendable_credit():
