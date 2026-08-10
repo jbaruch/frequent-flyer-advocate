@@ -19,8 +19,14 @@ and execute only that step. Do not run other steps; do not parallelize.
 Explicit chains:
 
 - Steps 3-8 all touch the store — run Step 1 first when readiness is unknown
-- Step 1 exiting `0` continues to Step 3, then to the step matching the user's intent
-- Step 1 exiting non-zero continues to Step 9
+- Step 1 is both an action and a prerequisite, and the two do not chain alike:
+  - Invoked directly, when readiness itself is what the user asked about, it
+    reports the state and finishes. It never continues to Step 3, and never to
+    "the step matching the user's intent" — that step is Step 1, and continuing
+    would loop
+  - Reached as a prerequisite to another step, exiting `0` continues to Step 3
+    and from there to the step that needed it
+- Step 1 exiting non-zero continues to Step 9, either way
 - Steps 4-8 run Step 3 first: this skill owns the record shape, so it migrates
   what it is about to read or write. Step 3 is idempotent, so on a current store
   this costs one call and changes nothing
@@ -29,7 +35,8 @@ Explicit chains:
   subset, so it continues to Step 9 and stops instead
 - Step 3 invoked directly finishes there
 - Step 9 chains back exactly once, to Step 2, and only for a missing store
-- Step 2 re-runs Step 1 once, then proceeds or continues to Step 9; it never loops
+- Step 2 re-runs Step 1 once and routes it on the original request, the same
+  split as above; it never loops
 - Any step reporting a failure continues to Step 9 (Handle Errors)
 - Every other Step 9 branch finishes without chaining
 
@@ -70,7 +77,8 @@ python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-adv
 
 Branch on the exit code, never on the printed wording:
 
-- `0` — continue to Step 3, and from there to the step matching the user's intent
+- `0` — store ready. Invoked directly, report that and finish here. Reached as a
+  prerequisite, continue to Step 3 and from there to the step that needed it
 - `3` — no store. Continue to Step 9, then return here
 - `4` — store unusable. Continue to Step 9; do not bootstrap over it
 
@@ -87,9 +95,11 @@ python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-adv
 `init --default` creates a fresh store at the default path. `init --path "<dir>"`
 creates one elsewhere and symlinks it back.
 
-Re-run Step 1 once. Exit `0` continues to Step 3, and from there to the step
-matching the user's intent. Anything else continues to Step 9 and does not
-return — a bootstrap that did not take is reported, never retried.
+Re-run Step 1 once, and route on the original request. Exit `0` reports the
+store ready and finishes when readiness itself is what the user asked about;
+otherwise it continues to Step 3 and from there to the step that needed the
+store. Anything else continues to Step 9 and does not return — a bootstrap that
+did not take is reported, never retried.
 
 ## Step 3 — Migrate the Store
 
