@@ -18,9 +18,13 @@ This skill is an action router — pick the step that matches the user's intent
 and execute only that step. Do not run other steps; do not parallelize.
 Explicit chains:
 
-- Steps 4-8 need a ready store — run Step 1 first when readiness is unknown
-- Step 1 exiting `0` continues to the step matching the user's intent
+- Steps 3-8 all touch the store — run Step 1 first when readiness is unknown
+- Step 1 exiting `0` continues to Step 3, then to the step matching the user's intent
 - Step 1 exiting non-zero continues to Step 9
+- Steps 4-8 run Step 3 first: this skill owns the record shape, so it migrates
+  what it is about to read or write. Step 3 is idempotent, so on a current store
+  this costs one call and changes nothing
+- Step 3 invoked directly, because the user asked to migrate, finishes there
 - Step 9 chains back exactly once, to Step 2, and only for a missing store
 - Step 2 re-runs Step 1 once, then proceeds or continues to Step 9; it never loops
 - Any step reporting a failure continues to Step 9 (Handle Errors)
@@ -86,25 +90,34 @@ take is reported, never retried.
 
 ## Step 3 — Migrate the Store
 
+Needs a ready store: run Step 1 first if readiness is unknown.
+
 ```bash
 python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py migrate --json
 ```
 
-This skill owns the record shape, so this is the only step that changes it.
-Other skills write to this store through the same script, and their writes
-deliberately leave records they did not author untouched — a non-owner must not
-migrate. Records written before versioning, or at an older version, stay as they
-are until this runs.
+This skill owns the record shape, so it upgrades records before consuming them
+rather than reading them at a version it has moved past. That is why Steps 4-8
+run this first — the owner migrates what it is about to read or write.
 
-Run it after adopting a store with `link`, and whenever a read reports records
-this script would not consume. It is idempotent: a store already current reports
-`changed: false` and is not rewritten.
+Other skills write to this store through the same script, and their writes
+deliberately leave records they did not author untouched. A non-owner must not
+migrate, so records they wrote at an older version stay as they are until this
+runs.
+
+Idempotent: a store already current reports `changed: false` and is not
+rewritten, so running it ahead of every read costs one call.
 
 `skipped_newer` above zero means records were written by a newer version of this
 plugin than the one installed. Those are left alone by design — report the count
-and say the plugin needs updating to read them. Finish here.
+and say the plugin needs updating to read them.
+
+Reached from Steps 4-8, continue to the step that called it. Invoked directly
+because the user asked to migrate, report the counts and finish here.
 
 ## Step 4 — List Credits
+
+Run Step 3 first — the owner migrates the store before it reads or writes it.
 
 ```bash
 python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py list --json
@@ -116,6 +129,8 @@ payload echoes them, so a narrowed list is never presented as the whole store.
 Finish here.
 
 ## Step 5 — Show What Is Expiring
+
+Run Step 3 first — the owner migrates the store before it reads or writes it.
 
 ```bash
 python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py expiring --json
@@ -129,6 +144,8 @@ entry with its deadline. The `no_expiry` entries are a separate list and are not
 a deadline — never fold them into the urgent set. Finish here.
 
 ## Step 6 — Match Credits to a Booking Scenario
+
+Run Step 3 first — the owner migrates the store before it reads or writes it.
 
 ```bash
 python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py check --json --scenario "<itinerary description>" --passengers "Name One,Name Two"
@@ -144,6 +161,8 @@ credits belonging to family members not on the trip — present it as its own
 callout, never merged into `matches`. Finish here.
 
 ## Step 7 — Add a Credit
+
+Run Step 3 first — the owner migrates the store before it reads or writes it.
 
 `--type`, `--description`, and `--value` are the required flags:
 
@@ -168,6 +187,8 @@ An airline's offer is not a credit until it exists. Add it when the user
 confirms they hold it, never from an alert or a promise. Finish here.
 
 ## Step 8 — Mark a Credit Used
+
+Run Step 3 first — the owner migrates the store before it reads or writes it.
 
 ```bash
 python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py use --json --id <N> --note "<what it was applied to>"

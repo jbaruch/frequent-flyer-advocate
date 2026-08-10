@@ -89,9 +89,11 @@ The stamp is a text-level insert, not a parse-and-reformat of the whole store. R
 
 Only this skill migrates, and it migrates through one explicit operation: the `migrate` subcommand, reached from Step 3.
 
-`write_inventory()` deliberately does not migrate. Every skill in the writer table below calls `credits-tracker.py` directly, so a migration on the write path would run under a non-owner writer — which `stateful-artifacts` Migration Policy reserves to the owner. A non-owner's `add` or `use` therefore leaves everyone else's records at whatever version they carry; the next `migrate` upgrades them.
+The owner migrates what it is about to consume. Migration Policy has the owner detect an older record on read, upgrade it, and rewrite it — so the router runs Step 3 ahead of every store-touching step (4-8), not only when a user asks to migrate. Older records therefore do not survive an owner read; they survive a *non-owner* one, which is the point.
 
-`migrate` is idempotent: a store already current is left byte-identical and reports `changed: false`.
+`write_inventory()` deliberately does not migrate. Every skill in the writer table below calls `credits-tracker.py` directly, so a migration on the write path would run under a non-owner writer — which Migration Policy reserves to the owner. A non-owner's `add` or `use` therefore leaves everyone else's records at whatever version they carry; the next owner run upgrades them.
+
+`migrate` is idempotent: a store already current is left byte-identical and reports `changed: false`. That is what makes running it ahead of every owner read affordable.
 
 `stamp_schema_version()` walks every record:
 
