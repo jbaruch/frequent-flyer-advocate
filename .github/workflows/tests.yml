@@ -1,0 +1,30 @@
+name: Tests
+
+# Pre-merge gate. Runs the same .github/scripts/pre-publish-gate.sh that the publish
+# workflow runs after merge, so "CI must pass before merging" (commit-conventions) is
+# satisfied by the same script that guards the registry — one gate, two trigger points,
+# no drift between them.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Run the diagnostics and test gate
+        run: bash .github/scripts/pre-publish-gate.sh

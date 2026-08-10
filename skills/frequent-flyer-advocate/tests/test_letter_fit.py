@@ -410,6 +410,21 @@ def test_info_on_an_unknown_airline_is_rejected():
 
 # ── the shipped metadata itself ───────────────────────────────────────────────
 
+def test_skill_invocations_use_the_plugin_mount_path():
+    # skill-authoring Script References: step bodies carry the path that resolves at the
+    # invocation site, one convention per SKILL.md. A placeholder or a bare repo-relative
+    # path fails when a consumer copies the command as written.
+    skill = os.path.normpath(os.path.join(HERE, "..", "SKILL.md"))
+    with open(skill, encoding="utf-8") as f:
+        text = f.read()
+    assert "<this-skill-dir>" not in text, "unresolved placeholder left in a step body"
+    mount = ".tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate"
+    for line in text.split("\n"):
+        if "python3 " not in line:
+            continue
+        assert mount in line, f"invocation does not use the mount path:\n  {line.strip()}"
+
+
 def test_shipped_metadata_records_provenance_for_every_limit():
     with open(SHIPPED_METADATA, encoding="utf-8") as f:
         md = json.load(f)

@@ -1,0 +1,9 @@
+{
+  "include": [
+    "skills/frequent-flyer-advocate/scripts",
+    "skills/frequent-flyer-advocate/tests"
+  ],
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "standard",
+  "reportMissingImports": "error"
+}

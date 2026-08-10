@@ -23,9 +23,9 @@ grounded in the airline's own published policies, vision statements, and federal
 - [references/flight-verification.md](references/flight-verification.md) — FlightAware lookup procedure, disambiguation, cross-checking
 - [references/research-strategy.md](references/research-strategy.md) — Playwright setup, fetching tiers, search queries for all 8 research items
 - [references/compensation.md](references/compensation.md) — severity tiers, compensation ranges, status multiplier
-- [scripts/letter-fit.py](scripts/letter-fit.py) — measures a draft against the airline's form character limit and flags markdown the form may render literally. Emits JSON on stdout in every mode. Run in Step 9 before presenting any form-mode letter: `python3 <this-skill-dir>/scripts/letter-fit.py --airline <code> --file <draft>`. Backed by `scripts/airline-form-metadata.json`
-- [scripts/credits-tracker.py](scripts/credits-tracker.py) — flight credits/vouchers inventory (shared globally via `~/.claude/travel-credits/`). Run with full path: `python3 <this-skill-dir>/scripts/credits-tracker.py`
-- [scripts/complaints-bank.py](scripts/complaints-bank.py) — past complaint history for pattern detection (shared globally via `~/.claude/complaint-bank/`). Run with full path: `python3 <this-skill-dir>/scripts/complaints-bank.py`
+- [scripts/letter-fit.py](scripts/letter-fit.py) — measures a draft against the airline's form character limit and flags markdown the form may render literally. Emits JSON on stdout in every mode. Run in Step 9 before presenting any form-mode letter: `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/letter-fit.py --airline <code> --file <draft>`. Backed by `scripts/airline-form-metadata.json`
+- [scripts/credits-tracker.py](scripts/credits-tracker.py) — flight credits/vouchers inventory (shared globally via `~/.claude/travel-credits/`). Run with full path: `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py`
+- [scripts/complaints-bank.py](scripts/complaints-bank.py) — past complaint history for pattern detection (shared globally via `~/.claude/complaint-bank/`). Run with full path: `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py`
 
 ---
 
@@ -51,8 +51,8 @@ bootstrap if missing:
 ```bash
 # Each store's `status` subcommand owns the readiness contract (no shell logic here):
 # prints ready / missing / invalid and exits 0 / 3 / 4 respectively.
-python3 <this-skill-dir>/scripts/credits-tracker.py status
-python3 <this-skill-dir>/scripts/complaints-bank.py status
+python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py status
+python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py status
 ```
 
 For each store reported `MISSING` (or `INVALID`), ask the user (via `AskUserQuestion`) whether they already
@@ -68,11 +68,11 @@ Then run the matching command (use the same wording for the complaint bank):
 
 ```bash
 # 1. Link an existing database (ask for the path first):
-python3 <this-skill-dir>/scripts/credits-tracker.py link --path "<existing-dir>"
+python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py link --path "<existing-dir>"
 # 2. Fresh at default:
-python3 <this-skill-dir>/scripts/credits-tracker.py init --default
+python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py init --default
 # 3. Fresh at custom path:
-python3 <this-skill-dir>/scripts/credits-tracker.py init --path "<dir>"
+python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py init --path "<dir>"
 ```
 
 If a command reports a **dangling symlink** (target missing), the cloud folder isn't mounted
@@ -84,7 +84,7 @@ immediately to Step 2.
 ## Step 2 — Resolve Pending Complaints
 
 Run:
-`python3 <this-skill-dir>/scripts/complaints-bank.py pending`
+`python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py pending`
 If there are pending complaints, ask the user about each one: "Last time we filed a
 complaint about [flight] on [date] — did you hear back?" Record the resolution with
 `resolve --id <id> --resolution <STATUS> --note "..."`. Use RESOLVED, PARTIAL, DENIED,
@@ -114,7 +114,7 @@ long questionnaire. Listen, then ask targeted follow-ups based on what's missing
 
 ### If the channel is a web form
 
-Run `python3 <this-skill-dir>/scripts/letter-fit.py --airline <code> --info` for what is
+Run `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/letter-fit.py --airline <code> --info` for what is
 already recorded about that airline's form. It emits JSON; read `metadata.channels` for the
 recorded limit and prefilled fields. Then fill the gaps from the user:
 
@@ -161,7 +161,7 @@ missing or self-contradictory and its answer changes the letter.
 ## Step 4 — Check Prior Compensation History
 
 Once you know the passenger name and airline, always run:
-`python3 <this-skill-dir>/scripts/credits-tracker.py list --passenger <name> --airline <code>`
+`python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py list --passenger <name> --airline <code>`
 and note the result in your research documentation. If credits are found, use them as
 escalation leverage in the letter. If empty or unavailable, note that and continue.
 
@@ -172,7 +172,7 @@ Proceed immediately to Step 5.
 ## Step 5 — Check Complaint History
 
 Run:
-`python3 <this-skill-dir>/scripts/complaints-bank.py check --airline <code> --passenger <name>`
+`python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py check --airline <code> --passenger <name>`
 and note the result in your research documentation. If patterns exist (same category 2+
 times, prior DENIED complaints, same route recurring), hold them for Step 8 — see the
 complaint-patterns rule for when to use them and when not to.
@@ -317,7 +317,7 @@ Form mode only. Never present a form-mode letter on your own character count. Wr
 draft to a file and measure it:
 
 ```bash
-python3 <this-skill-dir>/scripts/letter-fit.py --airline <code> --file <draft-path>
+python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/letter-fit.py --airline <code> --file <draft-path>
 # add --limit <N> when Step 3 got a limit for an airline the metadata doesn't record
 ```
 
@@ -347,7 +347,7 @@ Neither belongs in the installed plugin's metadata — `tessl install` overwrite
 observation is lost. Route them instead:
 
 - **This session** — the user reports the form's maximum: rerun with `--limit <max>`.
-- **This machine, durably** — copy `<this-skill-dir>/scripts/airline-form-metadata.json`
+- **This machine, durably** — copy `.tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/airline-form-metadata.json`
   somewhere the user owns, record the verified `char_limit` there, and pass
   `--metadata <their-copy>` on later runs.
 - **Everyone** — tell the user both numbers are worth upstreaming to
@@ -365,7 +365,7 @@ After presenting the letter, provide actionable next steps:
 
 **Where to send:**
 - Check the airline's recorded channels first:
-  `python3 <this-skill-dir>/scripts/letter-fit.py --airline <code> --info`
+  `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/letter-fit.py --airline <code> --info`
 - Its `metadata.channel_notes` field reports known-dead or deprioritized channels. Where a
   channel is recorded as unreliable, route around it rather than sending the letter into it
   — AA's executive customer-relations email is the recorded case: web form first, paper mail
@@ -405,10 +405,10 @@ Step 11.
 ## Step 11 — File the Complaint to the Bank
 
 After the letter is finalized, always file it:
-`python3 <this-skill-dir>/scripts/complaints-bank.py file --airline <code> --flight <flight> --flight-date <YYYY-MM-DD> --route <ORIG-DEST> --passenger <name> --category <CAT> --severity <SEV> --summary "<1-2 sentences>" --outcome "<what was requested>"`
+`python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py file --airline <code> --flight <flight> --flight-date <YYYY-MM-DD> --route <ORIG-DEST> --passenger <name> --category <CAT> --severity <SEV> --summary "<1-2 sentences>" --outcome "<what was requested>"`
 
 If the user returns with a compensation outcome, log it in both systems:
-`python3 <this-skill-dir>/scripts/credits-tracker.py add --type VOUCHER --description "..." --value <amount> --passenger "..." --airline <code> --expiry <date> --restrictions "..."`
-`python3 <this-skill-dir>/scripts/complaints-bank.py resolve --id <id> --resolution <RESOLVED|PARTIAL|DENIED> --note "<what they got>"`
+`python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py add --type VOUCHER --description "..." --value <amount> --passenger "..." --airline <code> --expiry <date> --restrictions "..."`
+`python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py resolve --id <id> --resolution <RESOLVED|PARTIAL|DENIED> --note "<what they got>"`
 
 Finish here.
