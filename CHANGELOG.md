@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.9.36 — 2026-08-10
+
 ### Fixed
 
 - Every expiry decision reads an injectable reference date instead of the wall clock, so no test depends on being ahead of it. Resolves #40.
