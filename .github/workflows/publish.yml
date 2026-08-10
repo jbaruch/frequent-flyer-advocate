@@ -25,3 +25,9 @@ jobs:
       TESSL_TOKEN: ${{ secrets.TESSL_TOKEN }}
     with:
       skill-review-credit-outage: skip
+      # Run this repo's test suites before the publish steps. The gate logic
+      # lives in the caller's script per script-delegation; a non-zero exit
+      # fails the publish so no untested tracker or letter-fit change reaches
+      # the registry.
+      python-version: '3.12'
+      pre-publish-script: .github/scripts/pre-publish-gate.sh

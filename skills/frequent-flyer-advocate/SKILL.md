@@ -324,9 +324,7 @@ python3 <this-skill-dir>/scripts/letter-fit.py --airline <code> --file <draft-pa
 Exit 0 means it fits, 1 means it overflows, 2 means the invocation or metadata is wrong. The
 script emits a JSON report; read the verdict from it rather than recomputing anything.
 
-Presenting requires **both** exit 0 and an empty `formatting_warnings` array. Exit 0 alone is
-not enough — the script exits 0 on a letter that fits while still carrying markup the form
-would render literally.
+Presenting requires **both** exit 0 and an empty `formatting_warnings` array.
 
 - **Exit 1** — trim and rerun. Do not show the user an overflowing draft.
 - **Exit 0, `formatting_warnings` non-empty** — strip the flagged markup and rerun. Do not
@@ -338,9 +336,17 @@ would render literally.
 - **Exit 2** — fix what the stderr message names, then rerun. Never fall back to counting
   by hand.
 
-When the user reports back what the live form's counter actually said, add that airline's
-verified limit and counting evidence to `scripts/airline-form-metadata.json` so the next
-letter is measured rather than estimated.
+When the user reports what the live form's counter actually said, that number is new
+evidence. Do not edit the metadata inside the installed plugin — `tessl install` overwrites
+it and the observation is lost. Instead:
+
+- **This session** — rerun with `--limit <N>` set to the number the form reported.
+- **This machine, durably** — copy `<this-skill-dir>/scripts/airline-form-metadata.json`
+  somewhere the user owns, add the verified `char_limit` / `counting_method` there, and pass
+  `--metadata <their-copy>` on later runs.
+- **Everyone** — tell the user the observation is worth upstreaming to
+  `jbaruch/frequent-flyer-advocate`, and give them the airline code, channel, the count the
+  script reported, and the count the form reported.
 
 Proceed immediately to Step 10.
 
@@ -361,8 +367,10 @@ After presenting the letter, provide actionable next steps:
 - Secondary: standard customer care (backup/paper trail)
 - Include any airline-specific submission forms
 - If the user already contacted general customer service, see escalation-output rule.
-- If Step 7 research turns up a channel change the metadata doesn't record, add it to
-  `scripts/airline-form-metadata.json` under that airline's `channel_notes`.
+- If Step 7 research turns up a channel change the metadata doesn't record, state it in the
+  escalation guidance and tell the user it is worth upstreaming to
+  `jbaruch/frequent-flyer-advocate` as a `channel_notes` update. Do not edit the installed
+  plugin's copy — `tessl install` overwrites it.
 
 **When to file a DOT complaint (airconsumer.dot.gov):**
 - **File IMMEDIATELY, in parallel with the complaint letter** for: denied boarding (this is

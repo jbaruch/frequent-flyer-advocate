@@ -15,6 +15,8 @@
 
 ### Changed
 
+- `.github/workflows/publish.yml` wires the reusable publish workflow's `pre-publish-script` and `python-version` inputs at the new `.github/scripts/pre-publish-gate.sh`, which runs both test suites (67 cases) before the publish steps. A non-zero exit fails the publish. Resolves the test half of #10 — shipping a new suite while recording that it does not run in CI is the `testing-standards` violation the deferral created, so the CI change is announced in this PR's scope rather than left open.
+
 - `SKILL.md` Phase 1 asks for the submission channel alongside the other always-gather items, and for a web form follows up on the character limit and the fields the form captures itself. Asking after a draft exists is what forced the two compression passes in the June 2026 AA case: one to strip data the form already had, one to fit 1500 chars from ~5500.
 - `SKILL.md` Phase 4 adds the form-fit variant and makes `letter-fit.py` a gate — an overflowing draft is never presented, and the user sees the script's output rather than the agent's count.
 - `SKILL.md` Phase 5 reads recorded channel reliability from the metadata before recommending where to send. AA's executive customer-relations email is recorded as routing to unmonitored mailboxes since January 2026; the guidance is web form first, paper mail to the executive office for escalation.
@@ -26,7 +28,7 @@
 
 - Both scripts are FFA-only — no mirror exists in `jbaruch/jbaruch-travel-policy`, so no byte-identical-sync ceremony applies.
 - `counting_method` stays `"unknown"` for AA and WN. Resolving it needs someone to paste a known-length string into each live form and read the counter back; the inflation margin is the stand-in until then. A verified method makes the margin disappear on its own — the script uses the named counter and drops the multiplier.
-- Out of scope (follow-up): #10, wiring the tracker and letter-fit suites into CI. The reusable publish workflow already takes `pre-publish-script` + `python-version` inputs for exactly this; it is a CI change and gets its own PR.
+- Remaining from #10: the pyright gate. `language-diagnostics` wants the headless engine run in CI at zero findings; the tree is clean today, so it lands green whenever it is wired. Kept out of this PR to hold the CI surface to what the test gate needs.
 
 ## 0.9.13 — 2026-06-22
 
