@@ -1001,6 +1001,33 @@ def test_migrate_upgrades_an_explicitly_older_version():
     assert "Old-shape credit" in run(CREDITS, ["list"], home).stdout
 
 
+def test_migrate_does_not_rewrite_a_version_line_over_spacing():
+    """A current record whose version line spaces differently is still a no-op.
+
+    Canonicalizing the line would report changed: true for a whitespace difference
+    alone, and the owner runs migrate ahead of every read — so a cosmetic diff
+    would rewrite the store on every one of them.
+    """
+    home = _mktemp("schemaver-spacing-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Spaced credit",
+                  "--value", "15.00", "--airline", "DL"], home)
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        text = fh.read()
+    spaced = text.replace("- **Schema version**: 1", "- **Schema version**:  1")
+    with open(inventory, "w") as fh:
+        fh.write(spaced)
+
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+    assert payload["already_current"] == 1, payload
+    assert payload["changed"] is False, f"a spacing difference is not a migration: {payload}"
+
+    with open(inventory) as fh:
+        assert fh.read() == spaced, "the store must be left byte-identical"
+
+
 def test_migrate_reports_an_unparseable_version_line():
     """A version line that is not an integer is counted, not silently swallowed.
 

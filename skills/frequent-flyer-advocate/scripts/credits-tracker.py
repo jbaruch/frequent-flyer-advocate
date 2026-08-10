@@ -49,9 +49,10 @@ CREDITS_DIR = os.path.join(os.path.expanduser("~"), ".claude", "travel-credits")
 INVENTORY_PATH = os.path.join(CREDITS_DIR, "inventory.md")
 
 # Record shape version, per coding-policy: stateful-artifacts. Records written
-# before versioning carry no field; they read as this version and are stamped on
-# the next rewrite. Bump only alongside a migration in the owner skill
-# (skills/using-travel-credits) — see its state-schema.md.
+# before versioning carry no field and read as this version. They are stamped by
+# the `migrate` subcommand, never by an ordinary write — migration belongs to the
+# owner skill alone (see write_inventory() and cmd_migrate()). Bump only
+# alongside a migration in skills/using-travel-credits — see its state-schema.md.
 SCHEMA_VERSION = 1
 
 VALID_TYPES = ["GUC", "RUC", "COMP", "ECREDIT", "VOUCHER", "PARTNER", "AMEX", "OTHER"]
@@ -656,9 +657,14 @@ def stamp_schema_version(content):
                 out.append(line)
                 continue
             if version == SCHEMA_VERSION:
+                # Emit the line verbatim rather than a canonical rewrite. A record
+                # already at the current version needs no migration, and re-rendering
+                # it would report changed: true for a difference in spacing alone —
+                # breaking the idempotence the owner's pre-read run depends on.
                 stats["already_current"] += 1
-            else:
-                stats["upgraded"] += 1
+                out.append(line)
+                continue
+            stats["upgraded"] += 1
             while version < SCHEMA_VERSION:
                 upgrade_record_body([], version)
                 version += 1

@@ -228,8 +228,11 @@ store, which this skill forbids. Finish here.
   parse as an integer, which means the store was hand-edited or truncated.
   Report the count and stop. Repairing it is the user's action — this skill
   will not guess at the intended version.
-- Unknown `--id` on Step 8. Re-run Step 4 for a current id. Ids belong to the
-  store and are not stable once a record is archived.
+- Unknown `--id` on Step 8. The id is not in the active section, most often
+  because the credit was already marked used and now sits in the archive. Ids
+  are stable — a record keeps its own through archiving — so re-run Step 4 to
+  see what is still active rather than assuming a renumbering that does not
+  happen.
 - Rejected `--type` on Step 7. Read `--help` for the accepted set. Never guess
   from an abbreviation's plain-English reading.
 
