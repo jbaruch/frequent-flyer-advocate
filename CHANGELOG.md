@@ -1,5 +1,22 @@
 # Changelog
 
+### Added
+- `skills/using-travel-credits` — an action router over the shared inventory at `~/.claude/travel-credits/`, giving the store one documented invocation surface. Eight steps: readiness, bootstrap, list, expiring, scenario matching, add, use, errors. Refs #30.
+  - The store has two writers. `jbaruch/jbaruch-travel-policy` ships a byte-identical 1148-line copy of `credits-tracker.py` and writes the same file, which `stateful-artifacts` forbids — no single owner for shape changes — and which is why #23 and #24 have nowhere safe to land. That consumer cannot simply call this plugin's script either: `skill-authoring` Script References bars mixing a plugin-mount path among repo-relative ones inside one SKILL.md, and its skill invokes six of its own scripts as `scripts/…`. A typed `Skill(skill: "using-travel-credits")` call is the shape it already uses to reach `using-tripit` and `using-fifty-tabs`. This lands the target; deleting the copy is the follow-up in that repo.
+  - Every invocation passes `--json`. 0.9.27 gave the script a JSON contract precisely because "every consumer was parsing tables", and a new consumer reading the prose rendering would have walked straight back into it. The router reads `credits`, `expiring` / `no_expiry`, and each match's `reasons` off the payload, and branches on the `error` field rather than stderr text.
+  - Step 8 keeps `missing` and `invalid` distinct. A dangling symlink to an unmounted cloud store looks absent to a naive check, and running `init` beside it forks the data irrecoverably — so the script refuses rather than guesses, and the skill never bootstraps over an `invalid`.
+  - `--airline` and `--brand` are documented as independent dimensions rather than alternatives, matching the behavior 0.9.12 landed. The router marks only `--type`, `--description`, and `--value` required, so an agent does not block on a passenger for a transferable gift card or an expiry for a goodwill deposit.
+  - `credits-tracker.py` stays at `skills/frequent-flyer-advocate/scripts/`. Moving it under the new skill would split a test file parametrized across both trackers and rewire nine call sites in a published skill, for no gain to the consumer — the router names it at its mount path either way. A decision, not an oversight.
+- `skills/using-travel-credits/state-schema.md` documents the artifact `stateful-artifacts` requires a schema for: location, file structure, record shape, the writer/reader contract naming all three consuming skills, the three bootstrap states, and the migration policy. The skill claims ownership explicitly; the script is the implementation the owner writes through, not the owner.
+- Three tests pin the router's contract — every invocation uses the plugin-mount path, every invocation passes `--json`, and the skill does not restate the script's `--type` vocabulary (`script-as-black-box`; a copied list drifts, and a stale one is how an agent picks a type the script rejects).
+### Fixed
+- `credits-tracker.py` stamps a `schema_version` on every record, which `stateful-artifacts` Required Attributes demands and no record carried. Closes #26.
+  - `write_inventory()` routes through `stamp_schema_version()`: absent is stamped, older is stepped up through `upgrade_record_body()` and restamped, equal is untouched, newer is left alone. `upgrade_record_body()` is identity at version 1 by construction — nothing shipped predates it — and exists so the next bump adds a branch instead of building the migration machinery under pressure.
+  - A passive default was not enough. An earlier cut relied on `format_credit()` defaulting the version on "the next rewrite", which never happens: `cmd_add` splices markdown rather than reserializing, so pre-existing records are never re-emitted. The test asserting a stripped record gets re-stamped failed until the explicit migration existed.
+  - The stamp is a text-level insert after each `### #` heading, deliberately. `format_credit()` writes only the ten fields it knows, so a parse-and-reformat round-trip would silently drop anything else and rewrite untouched records — a migration that risks more than it repairs.
+  - `parse_credits()` omits records newer than `SCHEMA_VERSION` with a per-record stderr warning, per Migration Policy's lagging-reader rule. `next_id()` scans raw `### #` headings rather than that filtered view, so an id is never allocated over a record the script cannot see.
+  - A version **2** stays gated on de-duplication (#30). Version 1 is safe with two writers because both parsers preserve records they did not write and ignore fields they do not know. That property does not survive a shape change.
+
 ## 0.9.30 — 2026-08-10
 
 ### Changed
@@ -8,6 +25,7 @@
   - Verified locally rather than assumed: the gate runs clean under pyright 1.1.411 at 0 errors, 0 warnings, 0 informations. A diagnostics-engine bump is the one dependency bump that can turn a green tree red on its own.
   - `.github/scripts/lock-requirements.py` moves to 1.1.411 alongside the lock it generates. Dependabot edits the lock only, so the generator's `TOP_LEVEL` still said 1.1.408 — and `file-hygiene` admits the lock as a platform-required generated artifact on the condition that source and generated form stay reproducible together. Running the documented no-argument regeneration would have silently reverted the bump.
   - `test_generator_top_level_matches_the_committed_lock` fails when the two drift, so the next Dependabot lock bump cannot land half-applied. Confirmed it actually catches the drift rather than passing vacuously: reverting `TOP_LEVEL` to 1.1.408 turns it red.
+
 
 ## 0.9.29 — 2026-08-10
 
