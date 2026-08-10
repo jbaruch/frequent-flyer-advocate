@@ -43,7 +43,7 @@ DOT rules, FAA Reauthorization Act provisions, or enforcement precedent. Be prec
 cite the specific rule, not vague references to "federal regulations."
 
 ### Requested remedy
-Specific, calibrated, reasonable but firm. Read [references/compensation.md](references/compensation.md)
+Specific, calibrated, reasonable but firm. Read [compensation.md](compensation.md)
 for severity tiers and ranges. Always request a response within 14–21 business days.
 
 ### Closing

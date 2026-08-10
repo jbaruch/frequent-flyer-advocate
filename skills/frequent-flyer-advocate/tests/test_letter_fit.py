@@ -435,18 +435,31 @@ def test_every_reference_is_reachable_and_every_link_resolves():
     (skill-authoring Keep Skills Compact), so the two have to stay wired together.
     """
     skill_dir = os.path.normpath(os.path.join(HERE, ".."))
-    with open(os.path.join(skill_dir, "SKILL.md"), encoding="utf-8") as f:
-        skill = f.read()
     references = os.path.join(skill_dir, "references")
     on_disk = {f for f in os.listdir(references) if f.endswith(".md")}
     assert on_disk, "no reference files found — the check would pass vacuously"
 
+    with open(os.path.join(skill_dir, "SKILL.md"), encoding="utf-8") as f:
+        skill = f.read()
     orphans = [f for f in sorted(on_disk) if f"references/{f}" not in skill]
     assert not orphans, f"reference files nothing links to: {orphans}"
 
-    linked = set(re.findall(r"references/([a-z0-9-]+\.md)", skill))
-    broken = sorted(linked - on_disk)
-    assert not broken, f"SKILL.md links to missing reference files: {broken}"
+    # Resolve each link relative to the file it sits in, not to the skill root. A link
+    # copied from SKILL.md into a reference keeps its `references/` prefix and then
+    # points at references/references/… — which a root-relative check cannot see.
+    surfaces = [os.path.join(skill_dir, "SKILL.md")]
+    surfaces += sorted(os.path.join(references, f) for f in on_disk)
+    broken, checked = [], 0
+    for path in surfaces:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        for link in re.findall(r"\]\(([^)]+\.md)\)", text):
+            checked += 1
+            target = os.path.normpath(os.path.join(os.path.dirname(path), link))
+            if not os.path.isfile(target):
+                broken.append(f"{os.path.basename(path)} -> {link}")
+    assert checked, "no markdown links found — the check would pass vacuously"
+    assert not broken, f"links that do not resolve from their own file: {broken}"
 
 
 def test_skill_invocations_use_the_plugin_mount_path():
