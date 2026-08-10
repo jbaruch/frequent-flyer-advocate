@@ -1,5 +1,20 @@
 # Changelog
 
+### Added
+
+- Miles and points compensation is recorded as **history**, not inventory. A new `## Compensation History (Deposited)` section, `MILES` and `POINTS` types, and a `history` subcommand. Resolves #23.
+  - An eCredit has a lifecycle — issued, held, applied, used — and `credits-tracker.py` modelled that correctly. A deposit has none: when an airline grants 25,000 SkyMiles the balance is in the loyalty account at the moment of the grant. Logged as a credit it entered Active, nothing ever moved it out because no application event exists, and `use` was the only exit — so clearing the list meant recording a fiction. Asked whether specific goodwill miles had been redeemed, the account holder's answer was *"I can't tell the goodwill miles from other miles."* Correct, and not fixable by better record-keeping: once deposited they are fungible with the rest of the balance, and the loyalty program owns that number.
+  - A deposit never appears in `list`, `check`, or `expiring`, never counts toward the monetary total, and has no `use` transition — `use` on one exits non-zero with `deposit_has_no_use_transition` rather than archiving a redemption that never happened. `add --type MILES --expiry` is refused too: a deadline here would be one this file cannot enforce and `expiring` would report it as actionable.
+  - What it is for is the other half. The archive is what `frequent-flyer-advocate` reads for prior-compensation context during intake, and what `complaint-patterns` needs to state "third hardware failure in eight months" as fact rather than editorializing. That value is in the event — airline, date, case number, amount granted — and an event needs no used/unused state.
+  - `SCHEMA_VERSION` 2 migrates existing rows. A record is relocated when its `Value` names miles or points; anything else stays put, so a companion certificate valued `1 certificate` is untouched while `25000 miles` and `30,000 Honors points` move. Classification reads the `Value` field only — a description mentioning miles is prose, and `script-delegation`'s Regex Trap allows a fully-enumerable pattern, which two unit words are. The record's block moves verbatim apart from its type token, so fields the current formatter does not know survive the move.
+  - `SECTION_MARKERS` replaces the two-section `if active / else archive` branching that ran through `parse_credits`, `insert_credit`, and `remove_credit`. That form defaulted anything that was not `"active"` to the archive, so a mistyped section name silently read or wrote the wrong one; `section_markers()` raises instead. A store written before the section existed gains it on the next `migrate`.
+
+### Fixed
+
+- The test suite reads `SCHEMA_VERSION` from the script instead of hardcoding `1`. Seventeen assertions pinned the literal, so the v2 bump turned ten of them red for the version rather than for the behaviour — a suite that has to be rewritten on every bump is one that stops guarding the bump.
+- `migrate`'s `unconsumable` count covers every section. It summed only active and archive, so the records it had just relocated read as unconsumable and Step 3 stopped the router on a store that was entirely fine.
+- `SKILL.md` Step 11 says which `--type` a grant takes and warns that `COMP` is a Companion Certificate rather than a type for compensation generally. Nothing told an agent which type to use for a miles grant, and the only worked example was `--type VOUCHER` — so the choice was left to inference from an abbreviation that reads like the wrong word. The rename that removes the ambiguity at its source is #24.
+
 ## 0.9.31 — 2026-08-10
 
 ### Added
