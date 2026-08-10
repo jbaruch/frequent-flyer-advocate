@@ -1,5 +1,6 @@
 {
   "include": [
+    ".github/scripts",
     "skills/frequent-flyer-advocate/scripts",
     "skills/frequent-flyer-advocate/tests"
   ],

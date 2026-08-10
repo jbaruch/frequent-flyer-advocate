@@ -34,6 +34,10 @@ python3 -m pyright --version   # the version that actually ran, for the CI log
 python3 -m pyright
 echo "::endgroup::"
 
+echo "::group::lock generator suite"
+python3 .github/scripts/test_lock_requirements.py
+echo "::endgroup::"
+
 echo "::group::tracker storage-bootstrap suite"
 python3 "${TESTS_DIR}/test_trackers.py"
 echo "::endgroup::"
