@@ -64,7 +64,7 @@ The heading and `Schema version` are always written. Every other field is writte
 |---|---|---|
 | `using-travel-credits` | owner, writer, reader | `status`, `link`, `init`, `migrate`, `list`, `expiring`, `check`, `history`, `add`, `use` |
 | `frequent-flyer-advocate` | writer, reader | logs granted compensation; reads the archive for prior-compensation history |
-| `jbaruch/jbaruch-travel-policy` | reader, writer | reads before a search and when presenting an itinerary; marks credits used after a booking |
+| `jbaruch/jbaruch-travel-policy` | caller | reaches every operation through this skill; ships no tracker of its own since its 0.7.43 |
 
 `migrate` is the owner's alone. No other skill in this table may run it, and no other write path performs one.
 
@@ -100,7 +100,7 @@ The owner migrates what it is about to consume. Migration Policy has the owner d
 
 A non-owner does the opposite: it declines the record. `parse_credits()` consumes only records at `SCHEMA_VERSION` exactly, omitting anything off-version in either direction with a per-record stderr warning naming the recovery. Older means the owner has not upgraded it yet; newer means the owner is ahead of this reader. Both are read-only *no usable prior state*, and neither is a record a non-owner may migrate. A record carrying no version field is declined on the same grounds: Required Attributes puts a `schema_version` on every record, and without one a reader cannot know the shape it is holding. `migrate` stamps it and it reads normally afterwards.
 
-`write_inventory()` deliberately does not migrate. Every skill in the writer table below calls `credits-tracker.py` directly, so a migration on the write path would run under a non-owner writer — which Migration Policy reserves to the owner. A non-owner's `add` or `use` therefore leaves everyone else's records at whatever version they carry; the next owner run upgrades them.
+`write_inventory()` deliberately does not migrate. `frequent-flyer-advocate` calls `credits-tracker.py` directly to log granted compensation, so a migration on the write path would run under a non-owner writer — which Migration Policy reserves to the owner. A non-owner's `add` or `use` therefore leaves everyone else's records at whatever version they carry; the next owner run upgrades them.
 
 `migrate` is idempotent: a store already current is left byte-identical and reports `changed: false`. That is what makes running it ahead of every owner read affordable.
 
@@ -117,6 +117,10 @@ A non-owner does the opposite: it declines the record. `parse_credits()` consume
 
 An owner that cannot read a record must not rewrite it, which is why `migrate` leaves a newer record alone rather than stepping it down.
 
-Bump `SCHEMA_VERSION` only alongside a migration here. While `jbaruch/jbaruch-travel-policy` still ships its own copy of the script, a bump also falls under `stateful-artifacts` Cross-Pipeline Schema Bumps — two independently-released writers share this store, and the rollout has to account for both.
+Bump `SCHEMA_VERSION` only alongside a migration here.
 
-That older copy knows nothing of versioning, so a credit it adds carries no version field and this copy will not consume it until the next `migrate`. The store is not corrupted and nothing is lost — the record is preserved verbatim and reads normally once stamped — but the two writers no longer see the same inventory between an unversioned write and the next owner run. A version **2** would be worse: the older copy would keep writing v1-shaped records indefinitely. Removing the duplicate is the prerequisite, tracked in [#30](https://github.com/jbaruch/frequent-flyer-advocate/issues/30).
+**There is one writer.** `jbaruch/jbaruch-travel-policy` shipped a byte-identical copy of this script and wrote the same store from it. That copy is deleted and the removal is published — that repo's 0.7.43 routes every credits operation through this skill and ships no tracker of its own. [#30](https://github.com/jbaruch/frequent-flyer-advocate/issues/30) closed on it.
+
+That removal was the stated prerequisite for a v2 bump, and `stateful-artifacts` Cross-Pipeline Schema Bumps is why. With two independently-released writers, the older copy knew nothing of versioning and would have gone on writing v1-shaped records indefinitely, so no rollout order made a breaking bump safe. With the second writer gone there is no skew window to sequence: this script is the only thing that writes the store.
+
+A future bump re-enters that rule only if a second independently-released writer appears. Adding one is a decision to make deliberately, not a thing to discover during a migration.
