@@ -715,6 +715,59 @@ def test_invalid_expiry_rejected_in_prose_mode_too():
         assert fh.read() == before
 
 
+def test_uninitialized_store_still_emits_json():
+    """A bootstrap failure honours the contract instead of leaving stdout empty."""
+    home = _mktemp("json-uninit-")
+    res = run(CREDITS, ["list", "--json"], home)
+    assert res.returncode != 0
+    assert _json_out(res)["error"] == "store_not_initialized"
+
+
+def test_bad_argument_still_emits_json():
+    """An argparse failure exits before args exist and still emits an object."""
+    home = _mktemp("json-badarg-")
+    res = run(CREDITS, ["list", "--json", "--nonsense"], home)
+    assert res.returncode != 0
+    assert _json_out(res)["error"] == "command_failed"
+
+
+def test_every_json_failure_path_emits_an_object():
+    """No --json invocation may exit with unparseable stdout."""
+    uninit = _mktemp("json-fail-uninit-")
+    ready = _mktemp("json-fail-ready-")
+    run(CREDITS, ["init", "--default"], ready)
+
+    cases = [
+        (uninit, ["list", "--json"]),
+        (uninit, ["summary", "--json"]),
+        (uninit, ["expiring", "--json"]),
+        (ready, ["use", "--json", "--id", "999"]),
+        (ready, ["add", "--json", "--type", "NOPE", "--desc", "x", "--value", "1"]),
+        (ready, ["add", "--json", "--type", "ECREDIT", "--desc", "x", "--value", "1",
+                 "--expiry", "nope"]),
+        (ready, ["init", "--json"]),
+    ]
+    for home, argv in cases:
+        res = run(CREDITS, argv, home)
+        assert res.returncode != 0, f"{argv} unexpectedly succeeded"
+        out = _json_out(res)
+        assert "error" in out, f"{argv} emitted no error key: {out}"
+
+
+def test_check_reports_detections_on_an_empty_store():
+    """Scenario detection does not depend on whether the store holds credits."""
+    home = _mktemp("json-empty-check-")
+    run(CREDITS, ["init", "--default"], home)
+    out = _json_out(run(CREDITS, ["check", "--json", "--scenario",
+                                  "Delta business JFK-CDG"], home))
+    assert out["airlines_detected"] == ["DL"], out
+    assert out["match_count"] == 0
+
+    hotel = _json_out(run(CREDITS, ["check", "--json", "--scenario",
+                                    "Hilton London, 3 nights"], home))
+    assert hotel["brands_detected"] == ["HILTON"], hotel
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

@@ -144,6 +144,9 @@ def credit_payload(credit, today):
     return out
 
 
+JSON_EMITTED = False
+
+
 def emit_json(payload):
     """Write one JSON object to stdout — the agent-facing output contract.
 
@@ -151,6 +154,8 @@ def emit_json(payload):
     a single object, never a bare array or a stream of lines. Diagnostics stay
     on stderr, per rules/file-hygiene.md I/O Conventions.
     """
+    global JSON_EMITTED
+    JSON_EMITTED = True
     print(json.dumps(payload, indent=2, ensure_ascii=False))
 
 
@@ -280,6 +285,9 @@ def require_initialized():
             f"      credits-tracker.py init --path <dir>    # store elsewhere, symlinked back",
             file=sys.stderr,
         )
+    if "--json" in sys.argv:
+        emit_json({"error": "store_not_initialized", "store": CREDITS_DIR,
+                   "remedy": "run init --default, init --path DIR, or link --path DIR"})
     sys.exit(2)
 
 
@@ -991,11 +999,18 @@ def cmd_check(args):
     scenario = args.scenario.lower()
     today = datetime.now().date()
 
+    # Detect before the empty-store return: what the scenario names does not depend
+    # on what the store holds, and reporting [] here would misreport a Delta or
+    # Hilton scenario purely because no credits exist yet.
+    scenario_airlines = airlines_in_scenario(args.scenario)
+    scenario_hotels = hotels_in_scenario(args.scenario)
+
     if not credits:
         if args.json:
-            emit_json({"scenario": args.scenario, "airlines_detected": [],
-                       "brands_detected": [], "matches": [], "other_passenger_matches": [],
-                       "match_count": 0})
+            emit_json({"scenario": args.scenario,
+                       "airlines_detected": sorted(scenario_airlines),
+                       "brands_detected": sorted(scenario_hotels),
+                       "matches": [], "other_passenger_matches": [], "match_count": 0})
             return
         print("No active credits to check against.")
         return
@@ -1004,10 +1019,6 @@ def cmd_check(args):
     pax_filter = None
     if args.passengers:
         pax_filter = [p.strip().lower() for p in args.passengers.split(",")]
-
-    # Extract airlines and hotel brands mentioned in the scenario
-    scenario_airlines = airlines_in_scenario(args.scenario)
-    scenario_hotels = hotels_in_scenario(args.scenario)
 
     if not args.json:
         print(f"=== Checking credits for: {args.scenario} ===")
@@ -1331,19 +1342,43 @@ Examples:
     # status
     sub.add_parser("status", help="Report store readiness: ready (0) / missing (3) / invalid (4)", parents=[common])
 
-    args = parser.parse_args()
-    if not args.command:
-        parser.print_help()
-        sys.exit(1)
+    # Read before parsing: an argparse failure exits before args exist, and that
+    # exit still has to honour the JSON contract.
+    json_mode = "--json" in sys.argv
 
-    {
-        "list": cmd_list,
-        "add": cmd_add,
-        "use": cmd_use,
-        "expiring": cmd_expiring,
-        "check": cmd_check,
-        "summary": cmd_summary,
-        "init": cmd_init,
-        "link": cmd_link,
-        "status": cmd_status,
-    }[args.command](args)
+    try:
+        args = parser.parse_args()
+        if not args.command:
+            parser.print_help()
+            sys.exit(1)
+
+        {
+            "list": cmd_list,
+            "add": cmd_add,
+            "use": cmd_use,
+            "expiring": cmd_expiring,
+            "check": cmd_check,
+            "summary": cmd_summary,
+            "init": cmd_init,
+            "link": cmd_link,
+            "status": cmd_status,
+        }[args.command](args)
+    except SystemExit as exc:
+        # Any exit that skipped emit_json still owes the caller an object: under
+        # --json an empty stdout is unparseable, which reads as a crashed script
+        # rather than a reported failure. The diagnostic itself is already on
+        # stderr; this only guarantees stdout holds one object.
+        code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
+        if json_mode and code and not JSON_EMITTED:
+            emit_json({"error": "command_failed", "exit_code": code,
+                       "detail": "diagnostic on stderr"})
+        raise
+    # outer-boundary-process-contract: the caller reads stdout as JSON, so an
+    # unexpected exception surfacing as a traceback with empty stdout is
+    # indistinguishable from a crash. This emits a structured failure and
+    # re-raises; letting it propagate bare would break the stdout contract.
+    except Exception:  # noqa: BLE001
+        if json_mode and not JSON_EMITTED:
+            emit_json({"error": "unexpected_failure",
+                       "detail": "traceback on stderr"})
+        raise

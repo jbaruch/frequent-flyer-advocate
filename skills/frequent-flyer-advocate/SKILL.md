@@ -21,7 +21,11 @@ grounded in the airline's own published policies, vision statements, and federal
 - [references/flight-verification.md](references/flight-verification.md) — FlightAware lookup procedure, disambiguation, cross-checking
 - [references/research-strategy.md](references/research-strategy.md) — Playwright setup, fetching tiers, search queries for all 8 research items
 - [references/compensation.md](references/compensation.md) — severity tiers, compensation ranges, status multiplier
-- [scripts/credits-tracker.py](scripts/credits-tracker.py) — flight credits/vouchers inventory (shared globally via `~/.claude/travel-credits/`). Run with full path: `python3 <this-skill-dir>/scripts/credits-tracker.py`. Pass `--json` on every call from this skill: each subcommand then emits one JSON object on stdout, with diagnostics on stderr. Read the fields; do not parse the prose rendering.
+- [scripts/credits-tracker.py](scripts/credits-tracker.py) — flight credits/vouchers inventory, shared globally via `~/.claude/travel-credits/`
+- Run it with the full path: `python3 <this-skill-dir>/scripts/credits-tracker.py`
+- Pass `--json` on every call from this skill
+- Read the returned fields; never parse the prose rendering
+- Diagnostics go to stderr; stdout carries one JSON object, failures included
 - [scripts/complaints-bank.py](scripts/complaints-bank.py) — past complaint history for pattern detection (shared globally via `~/.claude/complaint-bank/`). Run with full path: `python3 <this-skill-dir>/scripts/complaints-bank.py`
 
 ---
