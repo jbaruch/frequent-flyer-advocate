@@ -74,9 +74,8 @@ def reference_date():
     try:
         return datetime.strptime(raw, "%Y-%m-%d").date()
     except ValueError:
-        print(f"ERROR: {TODAY_ENV}={raw!r} is not a YYYY-MM-DD date. Unset it or fix it; "
-              f"it will not be ignored.", file=sys.stderr)
-        sys.exit(2)
+        raise ValueError(f"{TODAY_ENV}={raw!r} is not a YYYY-MM-DD date. Unset it or fix "
+                         f"it; it will not be ignored.")
 
 # Record shape version, per coding-policy: stateful-artifacts, which puts one on
 # every record. A record carrying no version field is not consumed — see
@@ -1668,7 +1667,8 @@ def cmd_history(args):
         deposits = [d for d in deposits if needle in d.get("passenger", "").lower()]
 
     if args.json:
-        emit_json({"deposits": [credit_payload(d, reference_date()) for d in deposits],
+        as_of = reference_date()
+        emit_json({"deposits": [credit_payload(d, as_of) for d in deposits],
                    "count": len(deposits)})
         return
 
@@ -2206,14 +2206,24 @@ Examples:
     # exit still has to honour the JSON contract.
     json_mode = "--json" in sys.argv
 
-    # Validate the reference-date override up front rather than on first use. Only
-    # some paths read a date, so a lazy check would let a malformed value pass
-    # silently through the others — and a suite that meant to freeze time would run
-    # against the real clock and pass for the wrong reason on exactly those paths.
-    reference_date()
-
     try:
         args = parser.parse_args()
+
+        # Validate the reference-date override once, up front rather than on first use:
+        # only some paths read a date, so a lazy check let a malformed value pass
+        # silently through the others, and a suite that meant to freeze time would run
+        # against the real clock and pass for the wrong reason on exactly those paths.
+        #
+        # After parse_args so --help still works, and inside this try so the failure
+        # honours the --json contract instead of exiting with an empty stdout.
+        try:
+            reference_date()
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            if json_mode:
+                emit_json({"error": "invalid_reference_date", "env": TODAY_ENV,
+                           "given": os.environ.get(TODAY_ENV)})
+            sys.exit(2)
         if not args.command:
             parser.print_help()
             sys.exit(1)

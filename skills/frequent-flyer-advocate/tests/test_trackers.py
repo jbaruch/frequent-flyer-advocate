@@ -1466,6 +1466,15 @@ def test_a_malformed_reference_date_is_fatal_not_ignored():
     assert r.returncode == 2, f"expected a hard exit, got {r.returncode}: {r.stdout}{r.stderr}"
     assert "CREDITS_TRACKER_TODAY" in r.stderr, r.stderr
     assert "not be ignored" in r.stderr, r.stderr
+    # The failure still owes the caller one JSON object — an empty stdout reads as a
+    # crash, which is the contract 0.9.27 established for every other failure path.
+    payload = _json_out(r)
+    assert payload["error"] == "invalid_reference_date", payload
+    assert payload["given"] == "March 2026", payload
+
+    # And it must not break --help, which needs no reference date at all.
+    helped = run(CREDITS, ["--help"], home, today="March 2026")
+    assert helped.returncode == 0, f"--help must not require a valid override:\n{helped.stderr}"
 
 
 def test_the_reference_date_falls_through_to_the_module_clock_when_unset():
