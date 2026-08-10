@@ -171,22 +171,24 @@ missing or self-contradictory and its answer changes the letter.
 
 ## Step 4 — Check Prior Compensation History
 
-Once you know the passenger name and airline, always run both:
+Once you know the passenger name and airline, invoke `Skill(skill: "using-travel-credits")`
+and run **both** its list action and its compensation-history action, filtered to that
+passenger and airline.
 
-`python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py list --json --passenger <name> --airline <code>`
+Do not read the store with a direct `credits-tracker.py` call here. That skill owns the record
+shape and migrates the store before it reads. A direct read is a non-owner read: records the
+store has not yet been migrated to the current shape are skipped, so it returns `count: 0` — and
+`0` at this step is recorded as evidence that the airline has never compensated this passenger.
+A wrong answer, indistinguishable from the true one, in the step whose whole job is finding
+leverage.
 
-`python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py history --json --passenger <name> --airline <code>`
+The list action reports instruments the passenger still holds. The history action reports miles
+and points the airline already granted for past failures; those never appear in the list. Both
+reads are required — the list alone is not a prior-compensation check.
 
-`list` carries `credits` (each with `id`, `type`, `description`, `value`, `passenger`,
-`expiry`, `days_left`, `expired`) and `count` — instruments the passenger still holds.
-
-`history` carries `deposits` and `count` — miles and points the airline already granted for
-past failures. These never appear in `list`. Both reads are required; `list` alone is not a
-prior-compensation check.
-
-A `count` of 0 from either is a valid answer, not a failure. Note both results in your research
-documentation. If either is non-empty, use it as escalation leverage. If empty or unavailable,
-note that and continue.
+A count of 0 from either is a valid answer once it came through the owner skill. Note both
+results in your research documentation. If either is non-empty, use it as escalation leverage.
+If the skill reports the store missing or unreadable, note that and continue.
 
 Proceed immediately to Step 5.
 

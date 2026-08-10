@@ -1549,9 +1549,14 @@ def test_the_advocate_skill_reads_history_for_prior_compensation():
     with open(skill, encoding="utf-8") as fh:
         text = fh.read()
     step4 = text.split("## Step 4 —")[1].split("\n## ")[0]
-    assert "credits-tracker.py history" in step4, \
-        "Step 4 must read compensation history, not only the active list"
-    assert "credits-tracker.py list" in step4, "it still needs the held instruments too"
+    assert 'Skill(skill: "using-travel-credits")' in step4, \
+        "Step 4 must read through the owner skill, which migrates before it reads"
+    invocations = [ln for ln in step4.split("\n")
+                   if "python3 " in ln and "credits-tracker.py" in ln]
+    assert not invocations, (
+        "a direct read here is a non-owner read: un-migrated records are skipped and the "
+        f"count: 0 gets recorded as evidence of no prior compensation — {invocations}")
+    assert "history" in step4, "it must reach deposits, not only the active list"
 
 
 def test_an_unknown_section_name_fails_loudly():
