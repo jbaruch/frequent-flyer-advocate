@@ -1638,6 +1638,22 @@ def _router_invocations():
     return [ln for ln in lines if "credits-tracker.py" in ln and "python3 " in ln]
 
 
+def test_the_advocate_skill_does_not_restate_the_type_vocabulary():
+    """script-as-black-box: the accepted --type set belongs to the script.
+
+    The skill needs an agent to stop guessing a type from an abbreviation, and the
+    durable way to do that is the script's own `retired_type` / `invalid_type` payloads
+    plus `--help` — not a copied list that drifts out of date silently.
+    """
+    skill = os.path.normpath(os.path.join(HERE, "..", "SKILL.md"))
+    with open(skill, encoding="utf-8") as fh:
+        text = fh.read()
+    leaked = [tok for tok in _SCRIPT_OWNED_TYPES + ["COMPANION", "MILES", "POINTS"]
+              if tok in text]
+    assert not leaked, f"SKILL.md restates the script's type vocabulary: {leaked}"
+    assert "--help" in text, "it must point at --help for the accepted set"
+
+
 def test_router_invocations_use_the_plugin_mount_path():
     # skill-authoring Script References: one path convention per SKILL.md, and it must be
     # the one that resolves where the skill is invoked. A consumer copies these verbatim.
