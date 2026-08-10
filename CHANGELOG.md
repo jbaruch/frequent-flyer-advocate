@@ -1,5 +1,13 @@
 # Changelog
 
+### Fixed
+
+- `publish.yml` passes `stamp-changelog: true`, so the pipeline writes the `## <version> — <date>` heading instead of leaving it to the author. Resolves #32. The input defaults to `false` in the reusable workflow, so the stamp step's `if: inputs.stamp-changelog` never fired and `context-artifacts` CHANGELOG Hygiene put the heading on the author — with nothing failing when one was skipped. `tesslio/patch-version-publish` bumped the manifest and published regardless, thirteen times.
+  - An author-written heading was always a guess. The version a PR will publish as is not knowable while the PR sits in review: PR #25 carried `## 0.9.26` until 0.9.26 was taken out from under it. The stamp step reads the version the publish step is about to assign, so the heading cannot be stale.
+  - Authors now add un-headed `### ` blocks at the top of `CHANGELOG.md` and the pipeline heads them. This entry is written in that shape.
+- **Backfilled 0.9.14 through 0.9.26** — thirteen published versions with no CHANGELOG entry. `CHANGELOG.md` jumped from `## 0.9.27` straight to `## 0.9.13` while all thirteen bump commits sat on `main`. Reconstructed from the merge commits and their diffs; each heading carries the date of that version's `Bump …` commit, which is the date it actually published. The stretch is almost entirely CI and reviewer-architecture churn — four successive reviewer migrations (gh-aw upgrade → Codex CLI → central fleet reviewer → PR-time trigger), the move to the canonical reusable publish workflow, and a gitignore change that landed, reverted, and re-landed across 0.9.23–0.9.25.
+  - `context-writing-style` names CHANGELOG as where rule rationale and incident detail live, so the gap cost more than tidiness — rules point at an archive that was lying about what shipped.
+
 ## 0.9.28 — 2026-08-10
 
 ### Added
@@ -65,6 +73,85 @@
 - Every `--json` failure emits an object. `list --json` on an uninitialized store exited from `require_initialized()` with prose on stderr and empty stdout — unparseable, which reads to a caller as a crashed script rather than a reported failure. `require_initialized()` now emits `{"error": "store_not_initialized", …}`, and the `__main__` boundary guarantees the rest: any exit that skipped `emit_json` gets `{"error": "command_failed", "exit_code": N}`, including argparse failures, which is why `--json` is read from `sys.argv` before parsing. An unexpected exception emits `{"error": "unexpected_failure"}` and re-raises, under `error-handling` Outer-Boundary Carve-Out — the caller reads stdout as JSON, so a bare traceback breaks the contract it exists to serve.
 - `check --json` detects scenario airlines and brands before the empty-store return. A Delta scenario reported `airlines_detected: []` purely because no credits existed yet, making the store's contents change what the scenario was understood to say.
 - Thirteen tests cover the contract: one object per command, status states matching exit codes across all three branches, the `check` split, a structured error, the interactive refusal, prose remaining the default, a rejected `--expiry` leaving the store untouched in both modes, every failure path emitting an object, and scenario detection holding on an empty store.
+
+## 0.9.26 — 2026-08-10
+
+### Changed
+
+- `review-trigger.yml` and `.env.example` upgraded to the current fleet-review setup (#28). Published from the merge of `feat/upgrade-coding-policy-review`.
+
+## 0.9.25 — 2026-08-09
+
+### Changed
+
+- `.gitignore` covers the per-developer / per-agent files `tessl install` regenerates (`.tessl/`, `.agents/skills/`, and the per-agent skill mirrors), analogous to `node_modules`. Only `tessl.json` stays committed; the shared `.github` and `.vscode` trees keep everything else. Re-land of the 0.9.23 change with the ignore set narrowed after the 0.9.24 revert.
+
+## 0.9.24 — 2026-08-09
+
+### Fixed
+
+- Reverted the 0.9.23 gitignore change. Its ignore set removed `.tessl/.gitignore` and `.agents/skills/.gitignore` while ignoring paths the working tree still needed, so a fresh clone lost directories the agents read.
+
+## 0.9.23 — 2026-08-09
+
+### Changed
+
+- First attempt at gitignoring the tessl-generated artifacts. Reverted in 0.9.24 and re-landed correctly in 0.9.25.
+
+## 0.9.22 — 2026-07-21
+
+### Changed
+
+- `publish.yml` becomes a thin caller of the canonical fleet pipeline, `jbaruch/coding-policy/.github/workflows/publish-plugin.yml` (jbaruch/coding-policy#206), replacing the 51-line per-repo `publish-plugin.yml` (#22). Same review → lint → publish sequence, maintained in one place. The display name is preserved so run-name watchers keep working, and the secret is scoped to `TESSL_TOKEN` rather than `inherit`.
+- `.github/dependabot.yml` added so the reusable-workflow SHA pin has a stated renewal mechanism, which `dependency-management` Freshness requires and this repo had no scanner for.
+
+## 0.9.21 — 2026-07-21
+
+### Added
+
+- `.github/workflows/review-trigger.yml` fires a single-PR fleet review in `jbaruch/coding-policy` on each PR event, so the policy verdict lands before merge rather than waiting on the scheduled poll (jbaruch/coding-policy#202). Needs the `FLEET_DISPATCH_TOKEN` secret.
+
+## 0.9.20 — 2026-07-21
+
+### Changed
+
+- Review moves to the central fleet reviewer: `.github/fleet-review-enabled` enrolls the repo in the `coding-policy-fleet-reviewer` App, and the per-repo `review-codex.yml` plus `.github/codex-review/` are removed (jbaruch/coding-policy#202). The reviewer credential now lives only in `coding-policy`, not in each consumer.
+
+## 0.9.19 — 2026-07-20
+
+### Fixed
+
+- `.github/copilot-instructions.md` pointed Copilot at a non-existent `AGENTS.md ## Review guidelines` section and called the workflow reviewer an "app", both left over from the reviewer-architecture migration one version earlier. Repointed at `.github/workflows/review-codex.yml`. Backfill for jbaruch/coding-policy#196.
+
+## 0.9.18 — 2026-07-20
+
+### Changed
+
+- Review migrates to the Codex CLI subscription reviewer (#21): `.github/workflows/review-codex.yml` plus `.github/codex-review/` (prompt, schema, `post-review.sh`, `mask-secrets.sh`, `assert-no-secret-leak.sh`) replace the two gh-aw reviewers. Net −3972 lines — `review-anthropic` and `review-openai` and their 1800-line compiled `.lock.yml` files are gone, along with `.github/aw/actions-lock.json`. `.github/copilot-instructions.md` is added to scope Copilot to the correctness lane.
+
+## 0.9.17 — 2026-07-18
+
+### Changed
+
+- The skill-review step tolerates a tessl out-of-credits outage (#20): only a credit-outage signature — the fixed-string "run out of credits" phrase **and** a 403 — skips; every other non-zero exit still blocks the publish. This is the `context-artifacts` Credit-Outage Review Carve-Out, opted into explicitly. The pinned review script was vendored inline at the time, pending jbaruch/coding-policy#188.
+
+## 0.9.16 — 2026-07-03
+
+### Changed
+
+- `review-anthropic` and `review-openai` upgraded again, both `.md` sources and their compiled `.lock.yml` files.
+
+## 0.9.15 — 2026-07-02
+
+### Changed
+
+- Follow-up upgrade to the `jbaruch/coding-policy` PR review workflows (#19), correcting the prompts landed in 0.9.14.
+
+## 0.9.14 — 2026-07-01
+
+### Changed
+
+- `jbaruch/coding-policy` PR review workflows upgraded (#18) — `review-anthropic` and `review-openai` prompts rewritten and their `.lock.yml` files recompiled, plus a refreshed `.github/aw/actions-lock.json`.
 
 ## 0.9.13 — 2026-06-22
 

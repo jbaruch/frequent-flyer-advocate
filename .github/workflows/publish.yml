@@ -25,6 +25,12 @@ jobs:
       TESSL_TOKEN: ${{ secrets.TESSL_TOKEN }}
     with:
       skill-review-credit-outage: skip
+      # Write the `## <version> — <date>` heading over the top un-headed
+      # `### ` blocks, using the version the publish step is about to
+      # assign. Without this, context-artifacts CHANGELOG Hygiene leaves the
+      # heading to the author and nothing fails when one is skipped — which
+      # is how 0.9.14 through 0.9.26 published with no entry at all (#32).
+      stamp-changelog: true
       # Run this repo's test suites before the publish steps. The gate logic
       # lives in the caller's script per script-delegation; a non-zero exit
       # fails the publish so no untested tracker or letter-fit change reaches
