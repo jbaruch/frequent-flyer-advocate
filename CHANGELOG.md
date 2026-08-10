@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.9.34 — 2026-08-10
+
 ### Added
 
 - `credits-tracker.py update` edits an existing record's fields. Resolves #2.
