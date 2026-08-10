@@ -81,9 +81,9 @@ def run(script, args, home, cwd=None, stdin_text=None,
         today: "str | None" = FROZEN_TODAY):
     env = dict(os.environ, HOME=home)
     if today is None:
-        env.pop("CREDITS_TRACKER_TODAY", None)
+        env.pop("CREDITS_TRACKER_TODAY", None)   # unset: the production path
     else:
-        env["CREDITS_TRACKER_TODAY"] = today
+        env["CREDITS_TRACKER_TODAY"] = today     # set, including to "" on purpose
     return subprocess.run(
         [sys.executable, script, *args],
         env=env, cwd=cwd, capture_output=True, text=True, input=stdin_text,
@@ -1471,6 +1471,12 @@ def test_a_malformed_reference_date_is_fatal_not_ignored():
     payload = _json_out(r)
     assert payload["error"] == "invalid_reference_date", payload
     assert payload["given"] == "March 2026", payload
+
+    # An explicitly empty value is a misconfiguration, not an absence. Falling back to
+    # the wall clock there would be the silent fallback this whole guard refuses.
+    empty = run(CREDITS, ["list", "--json"], home, today="")
+    assert empty.returncode == 2, f"an empty override must not read as unset: {empty.stdout}"
+    assert _json_out(empty)["error"] == "invalid_reference_date", empty.stdout
 
     # And it must not break --help, which needs no reference date at all.
     helped = run(CREDITS, ["--help"], home, today="March 2026")

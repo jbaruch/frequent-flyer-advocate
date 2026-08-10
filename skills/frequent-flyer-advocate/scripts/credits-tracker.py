@@ -69,7 +69,10 @@ def reference_date():
     the wrong reason, which is the failure this seam exists to prevent.
     """
     raw = os.environ.get(TODAY_ENV)
-    if not raw:
+    # `is None`, not falsiness: an explicitly empty value is a misconfiguration — a
+    # shell variable that failed to expand — not a decision to use the wall clock.
+    # Treating it as absent is the silent fallback this validation exists to refuse.
+    if raw is None:
         return datetime.now().date()
     try:
         return datetime.strptime(raw, "%Y-%m-%d").date()
