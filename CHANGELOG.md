@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.9.32 — 2026-08-10
+
 ### Added
 
 - Miles and points compensation is recorded as **history**, not inventory. A new `## Compensation History (Deposited)` section, `MILES` and `POINTS` types, and a `history` subcommand. Resolves #23.
