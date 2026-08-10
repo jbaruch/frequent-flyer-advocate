@@ -32,7 +32,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 LOCK_PATH = os.path.normpath(os.path.join(HERE, "..", "requirements.txt"))
 
 # The gate's direct dependency. Everything else in the lock is pip's resolution of this.
-TOP_LEVEL = ["pyright==1.1.408"]
+# Must match the version pinned in the committed lock — test_lock_requirements.py fails
+# if they drift, since a no-argument regeneration would otherwise silently revert a bump
+# Dependabot applied to the lock alone.
+TOP_LEVEL = ["pyright==1.1.411"]
 
 HEADER = """\
 # Fully resolved, hash-pinned dependency set for .github/scripts/pre-publish-gate.sh.
