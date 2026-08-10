@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.9.33 — 2026-08-10
+
 ### Changed
 
 - The `COMP` type is renamed `COMPANION`. Resolves #24.
