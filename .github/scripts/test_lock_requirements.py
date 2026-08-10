@@ -233,6 +233,25 @@ def test_committed_lock_is_hash_pinned_and_complete():
     assert any("pyright==" in p for p in pins), "pyright is the gate's direct dependency"
 
 
+def test_generator_top_level_matches_the_committed_lock():
+    """The generator's default must pin the same version the committed lock does.
+
+    file-hygiene admits the lock as a platform-required generated artifact on the
+    condition that source and generated form stay reproducible together. Dependabot
+    edits the lock alone, so without this check the two drift and the documented
+    no-argument regeneration silently reverts the bump.
+    """
+    lock_path = os.path.normpath(os.path.join(HERE, "..", "requirements.txt"))
+    with open(lock_path, encoding="utf-8") as f:
+        locked = [ln.split(" ")[0].rstrip(" \\")
+                  for ln in f.read().split("\n")
+                  if "==" in ln and not ln.startswith((" ", "#"))]
+    for spec in lr.TOP_LEVEL:
+        assert spec in locked, (
+            f"generator pins {spec!r} but the committed lock has {locked!r} — "
+            "a no-argument regeneration would revert the lock")
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0
