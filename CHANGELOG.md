@@ -1,5 +1,14 @@
 # Changelog
 
+### Changed
+
+- The `COMP` type is renamed `COMPANION`. Resolves #24.
+  - `COMP` **reads** as "compensation" and **means** Companion Certificate. Nothing rejected the misreading, and every `COMP` row in the live store was a mistyped miles or points grant — five of five, with zero genuine companion certificates. The type's real meaning had never been used; its misread meaning was the only thing in it.
+  - The live consequence was a search-time claim: `check --scenario` reported a 25,000-SkyMiles deposit as *"Companion certificate may apply — check route restrictions"*, offering a loyalty-account balance as a bookable certificate. 0.9.32 removed that by moving deposits out of inventory; this removes the ambiguity that produced it, so the next person logging a grant cannot repeat the mistake.
+  - `SCHEMA_VERSION` 3 migrates the token in place, across every section, on records this reader brought to the current version. It runs **after** relocation, so a `COMP` row valued in miles leaves on its `Value` and is never labelled `COMPANION` on the way out — renaming first would have stamped the wrong label onto a deposit in the act of fixing labels. A test asserts no record is both relocated and renamed.
+  - `add --type COMP` no longer falls through to the generic invalid-type list. It fails with `retired_type`, names `COMPANION` and its label, and points a miles or points grant at `MILES` / `POINTS` — a caller told only that `COMP` is invalid learns nothing about where the thing it named actually went. Retired tokens live in `RENAMED_TYPES`, so the next rename is a map entry.
+  - `tests/test_trackers.py:415` documented the collision as terrain to route around via brand-tagging rather than a defect to fix. That test now exercises a brand-tagged `COMPANION`, which is what it was always trying to describe.
+
 ## 0.9.32 — 2026-08-10
 
 ### Added

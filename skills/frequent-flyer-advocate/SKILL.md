@@ -443,7 +443,7 @@ After the letter is finalized, always file it:
 
 If the user returns with a compensation outcome, log it in both systems.
 
-Pick `--type` by what the airline actually gave, and read `--help` for the accepted set — never infer a type from what an abbreviation looks like it spells. Two that get confused: a grant of **miles** is `MILES` and a grant of **points** is `POINTS`; `COMP` is a Companion Certificate and is not the type for compensation of any other kind.
+Pick `--type` by what the airline actually gave, and read `--help` for the accepted set — never infer a type from what an abbreviation looks like it spells. Two that get confused: a grant of **miles** is `MILES` and a grant of **points** is `POINTS`. The old `COMP` token is retired — a companion certificate is `COMPANION`, and the script rejects `COMP` with the replacement named.
 
 `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py add --json --type <TYPE> --description "..." --value <amount> --passenger "..." --airline <code> --expiry <date> --restrictions "..."`
 Returns `{"added": {…the stored record…}, "days_to_expiry": <int|null>}`. On a bad `--expiry` it returns

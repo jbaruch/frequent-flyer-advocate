@@ -27,7 +27,7 @@ Examples:
   python3 credits-tracker.py add --type GUC --description "Diamond GUC 2026 #1" --value "1 certificate" --expiry 2027-01-31 --passenger "Baruch Sadogursky" --airline DL --restrictions "DL-operated international only, paid fare required"
   python3 credits-tracker.py add --type ECREDIT --description "Canceled BNA-JFK Dec 2025" --value 347.20 --expiry 2026-12-15 --passenger "Baruch Sadogursky" --airline DL --confirmation "ABC123"
   python3 credits-tracker.py add --type ECREDIT --description "Canceled BNA-ORD Nov 2025" --value 189.50 --expiry 2026-11-30 --passenger "Kid Sadogursky" --airline AA --confirmation "XYZ789"
-  python3 credits-tracker.py add --type COMP --description "Delta Reserve companion cert 2026" --value "1 certificate" --expiry 2027-01-31 --passenger "Baruch Sadogursky" --airline DL --restrictions "Round-trip domestic or to/from Canada/Mexico, main cabin or above"
+  python3 credits-tracker.py add --type COMPANION --description "Delta Reserve companion cert 2026" --value "1 certificate" --expiry 2027-01-31 --passenger "Baruch Sadogursky" --airline DL --restrictions "Round-trip domestic or to/from Canada/Mexico, main cabin or above"
   python3 credits-tracker.py list --passenger baruch
   python3 credits-tracker.py expiring --days 90
   python3 credits-tracker.py add --type VOUCHER --description "Complimentary 2-night stay" --value "2 nights" --expiry 2027-03-31 --passenger "Baruch Sadogursky" --brand Hilton --restrictions "Hilton London Angel Islington only"
@@ -58,7 +58,10 @@ INVENTORY_PATH = os.path.join(CREDITS_DIR, "inventory.md")
 # v2: miles and points deposits move out of Active into the Compensation History
 #     section and take the MILES / POINTS types. They never had a held-then-applied
 #     lifecycle, so they never belonged in inventory.
-SCHEMA_VERSION = 2
+# v3: COMP is renamed COMPANION. The abbreviation reads as "compensation" and means
+#     Companion Certificate, and nothing rejected the misreading — every COMP row in
+#     the live store was a mistyped miles or points grant.
+SCHEMA_VERSION = 3
 
 # A value like "25000 miles", "30,000 Hilton Honors points", "8,000 SkyMiles",
 # "25,000 American AAdvantage miles". Deliberately anchored on the trailing unit
@@ -81,13 +84,13 @@ SCHEMA_VERSION = 2
 DEPOSIT_VALUE_RE = re.compile(
     r"^\s*[\d,]+\s*(?:[A-Za-z]+\s+)*[A-Za-z]*(miles|points)\b[\s.,;]*$", re.IGNORECASE)
 
-VALID_TYPES = ["GUC", "RUC", "COMP", "ECREDIT", "VOUCHER", "PARTNER", "AMEX", "OTHER",
+VALID_TYPES = ["GUC", "RUC", "COMPANION", "ECREDIT", "VOUCHER", "PARTNER", "AMEX", "OTHER",
                "MILES", "POINTS"]
 
 TYPE_LABELS = {
     "GUC": "Global Upgrade Certificate",
     "RUC": "Regional Upgrade Certificate",
-    "COMP": "Companion Certificate",
+    "COMPANION": "Companion Certificate",
     "ECREDIT": "eCredit",
     "VOUCHER": "Voucher",
     "PARTNER": "Partner Credit",
@@ -926,6 +929,48 @@ def relocate_deposits(content):
     return content, moved
 
 
+# v2 -> v3 type renames: old token -> current token. A rename is a heading edit, which
+# upgrade_record_body() cannot express — it sees only field lines.
+RENAMED_TYPES = {"COMP": "COMPANION"}
+
+
+def rename_legacy_types(content):
+    """v2 -> v3: rewrite retired type tokens in place, across every section.
+
+    Only records this reader brought to SCHEMA_VERSION, for the same reason relocation
+    is limited that way: a retype is a rewrite, and a record the reader cannot read is
+    not one it may rewrite.
+
+    Returns (content, renamed) where renamed lists {id, from_type, to_type}.
+    """
+    renamed = []
+    for section in SECTION_MARKERS:
+        start_marker, end_marker = section_markers(section)
+        if content.find(start_marker) == -1 or content.find(end_marker) == -1:
+            continue
+        block_start = content.index("\n", content.find(start_marker)) + 1
+        block = content[block_start:content.find(end_marker)]
+        preamble, records = split_records(block)
+
+        out, touched = list(preamble), False
+        for heading, body in records:
+            match = re.match(r"(\s*### #(\d+)\s*[—–-]\s*)\[([A-Z]+)\](.*)", heading)
+            new_type = RENAMED_TYPES.get(match.group(3)) if match else None
+            if match is None or new_type is None or record_version(body) != SCHEMA_VERSION:
+                out.append(heading)
+                out.extend(body)
+                continue
+            renamed.append({"id": int(match.group(2)),
+                            "from_type": match.group(3), "to_type": new_type})
+            out.append(f"{match.group(1)}[{new_type}]{match.group(4)}")
+            out.extend(body)
+            touched = True
+
+        if touched:
+            content = replace_section_block(content, section, "\n".join(out))
+    return content, renamed
+
+
 def count_record_headings(content):
     """Every `### #` record heading inside every section block.
 
@@ -1229,6 +1274,19 @@ def cmd_list(args):
 def cmd_add(args):
     content = read_inventory()
     ctype = args.type.upper()
+    if ctype in RENAMED_TYPES:
+        # A retired token gets its own message. Falling through to the generic list
+        # would tell a caller that COMP is invalid without saying that the thing it
+        # names still exists under another name — and the plain-English misreading of
+        # COMP is what put five mistyped rows in the store in the first place.
+        replacement = RENAMED_TYPES[ctype]
+        print(f"ERROR: '{ctype}' was renamed to '{replacement}' ({TYPE_LABELS[replacement]}). "
+              f"Use --type {replacement} if that is what this is. For a compensation grant of "
+              f"miles or points, use MILES or POINTS.", file=sys.stderr)
+        if args.json:
+            emit_json({"error": "retired_type", "given": ctype, "renamed_to": replacement,
+                       "label": TYPE_LABELS[replacement]})
+        sys.exit(1)
     if ctype not in VALID_TYPES:
         print(f"ERROR: Invalid type '{ctype}'. Valid: {', '.join(VALID_TYPES)}", file=sys.stderr)
         if args.json:
@@ -1404,6 +1462,10 @@ def cmd_migrate(args):
     # cannot express. It runs after stamping so every record carries the version it
     # is being moved under.
     migrated, moved = relocate_deposits(migrated)
+    # v2 -> v3 renames a type token, also a heading edit. Runs after relocation so a
+    # legacy COMP row valued in miles is moved on its Value first and never picks up a
+    # COMPANION label on the way out.
+    migrated, renamed = rename_legacy_types(migrated)
     changed = migrated != content
     if changed:
         write_inventory(migrated)
@@ -1420,7 +1482,8 @@ def cmd_migrate(args):
 
     if args.json:
         emit_json({"schema_version": SCHEMA_VERSION, "changed": changed,
-                   "unconsumable": unconsumable, "deposits_relocated": moved, **stats})
+                   "unconsumable": unconsumable, "deposits_relocated": moved,
+                   "types_renamed": renamed, **stats})
         return
 
     if not changed:
@@ -1436,6 +1499,8 @@ def cmd_migrate(args):
     for entry in moved:
         print(f"   Moved #{entry['id']} to compensation history: "
               f"[{entry['from_type']}] → [{entry['to_type']}]")
+    for entry in renamed:
+        print(f"   Renamed #{entry['id']}: [{entry['from_type']}] → [{entry['to_type']}]")
     if unconsumable:
         print(f"   ⚠️  Records the reader cannot consume: {unconsumable}")
 
@@ -1604,7 +1669,7 @@ def cmd_check(args):
                     else:
                         reasons.append("RUC available — only on DL-operated domestic (check if applicable)")
 
-            elif ctype == "COMP":
+            elif ctype == "COMPANION":
                 if any(w in scenario for w in ["round-trip", "round trip", "domestic", "companion"]):
                     reasons.append("Companion certificate may apply — check route restrictions")
 

@@ -86,9 +86,11 @@ Every writer promises: writes go through `credits-tracker.py`, never a hand edit
 
 ## Versioning
 
-Current version: **2**, the `SCHEMA_VERSION` constant in `credits-tracker.py`.
+Current version: **3**, the `SCHEMA_VERSION` constant in `credits-tracker.py`.
 
 **v1 → v2** moved miles and points grants out of Active into Compensation History and gave them the `MILES` / `POINTS` types. They never had a held-then-applied lifecycle, so Active counted them as available indefinitely and `use` was the only exit — recording an application event that never happened. A record is relocated when its `Value` names one of those two units; anything else stays where it is, so a genuine companion certificate valued "1 certificate" is untouched. The record's block moves verbatim apart from its type token, so fields the formatter does not know survive.
+
+**v2 → v3** renames the `COMP` type to `COMPANION`. `COMP` reads as "compensation" and means Companion Certificate; nothing rejected the misreading, and every `COMP` row in the live store turned out to be a mistyped miles or points grant. The rename runs after relocation, so a `COMP` row valued in miles leaves on its `Value` and is never labelled `COMPANION` on the way out. `add --type COMP` now fails with a message naming the replacement and pointing a miles grant at `MILES` / `POINTS`. Retired tokens live in `RENAMED_TYPES`.
 
 A writer stamps the record it is itself writing — `format_credit()` emits the current version on every record it formats. It does **not** stamp records it did not author, and no reader consumes a record that carries no version field.
 
