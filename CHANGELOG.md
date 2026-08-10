@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.35 — 2026-08-10
+
+### Fixed
+
+- Schema v4 relocates miles and points grants stranded in the archive. v2 moved grants out of Active because they have no held-then-applied lifecycle — the balance is in the loyalty account from the moment of the grant, so `use` asserts an event that never happened. That scan was scoped to Active alone, so a grant already marked used was never classified by its `Value`; it reached v3 still typed `COMP` and came out `COMPANION`, which is the one outcome v3's own note rules out when it observes that every `COMP` row in the live store was a mistyped grant. v4 re-reads the archive on `Value`, the same authority v2 used, so the result does not depend on the label v3 left behind.
+- The bug had a user-visible cost, which is how it surfaced. Two SkyMiles goodwill bonuses — 25,000 and 8,000 — sat in a live store reading as spendable Delta credits, and their owner marked them used while draining a set of genuine eCredits. Nothing was lost, since the miles were in the account the whole time, but the ledger had been reporting an availability that never existed and then recorded a redemption that could not occur.
+- Relocated records keep every field, the used date and note included. v2 already moves a record verbatim apart from its type token, and the archive path holds to that. The used state is wrong about the lifecycle and real as a record — somebody wrote that note, and it is the only trace of what was believed at the time. Dropping it would have been a second silent rewrite on top of the first.
+- Classification stays on `Value`, never on the type token, so a genuine companion certificate valued "1 certificate" is untouched in the archive exactly as it is in Active. `relocate_deposits()` now takes the section it scans; the v2 and v4 steps are the same function against `active` and `archive`, and `migrate` reports them separately as `deposits_relocated` and `archived_deposits_relocated`.
+- Consumers on 0.9.34 or earlier reading a v4 store take the documented `skipped_newer` path and stop rather than presenting a partial inventory. Update the plugin, then re-run `migrate`.
+
 ## 0.9.34 — 2026-08-10
 
 ### Added

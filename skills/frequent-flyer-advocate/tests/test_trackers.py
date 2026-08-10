@@ -1859,3 +1859,113 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+# A pre-v2 store whose miles grants sit in the ARCHIVE, already marked used. v2
+# scanned Active only, so these were never classified by Value and v3's rename
+# turned them into COMPANION — the shape found in the live store, reproduced here
+# with its real values (25,000 and 8,000 SkyMiles).
+_V1_STORE_ARCHIVED_DEPOSITS = """# Travel Credits Inventory
+
+## Active Credits
+
+<!-- CREDITS_START — do not edit this marker -->
+
+### #9 — [ECREDIT] Canceled BNA-JFK
+- **Schema version**: 1
+- **Value**: 347.20
+- **Expiry**: 2027-12-15
+- **Airline**: DL
+- **Added**: 2026-02-01
+<!-- CREDITS_END — do not edit this marker -->
+
+## Used/Expired Credits (Archive)
+
+<!-- ARCHIVE_START — do not edit this marker -->
+
+### #1 — [COMP] 25,000 SkyMiles goodwill bonus — DL5997 LHR-JFK
+- **Schema version**: 1
+- **Value**: 25000 miles
+- **Passenger**: Baruch Sadogursky
+- **Airline**: DL
+- **Added**: 2026-03-01
+- **Used date**: 2026-08-09
+- **Used note**: Reported used by Baruch 2026-08-09
+
+### #3 — [COMP] Delta Reserve companion cert 2026
+- **Schema version**: 1
+- **Value**: 1 certificate
+- **Passenger**: Baruch Sadogursky
+- **Airline**: DL
+- **Added**: 2026-03-01
+- **Used date**: 2026-08-09
+<!-- ARCHIVE_END — do not edit this marker -->
+"""
+
+
+def _archived_deposit_store_home(prefix):
+    home = _mktemp(prefix)
+    store = os.path.join(home, ".claude", "travel-credits")
+    os.makedirs(store)
+    with open(os.path.join(store, "inventory.md"), "w") as fh:
+        fh.write(_V1_STORE_ARCHIVED_DEPOSITS)
+    return home
+
+
+def test_migration_relocates_a_miles_grant_stranded_in_the_archive():
+    """v2 scanned Active only, so an archived grant fell through to v3's rename.
+
+    A grant is in the loyalty account from the moment it is made, so an archived
+    one records a use that cannot happen — and it landed as COMPANION, which v3's
+    own note says no COMP row deserved.
+    """
+    home = _archived_deposit_store_home("archived-deposit-")
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+
+    relocated = {e["id"]: e for e in payload["archived_deposits_relocated"]}
+    assert 1 in relocated, payload
+    assert relocated[1]["to_type"] == "MILES", relocated[1]
+    assert payload["unconsumable"] == 0, payload
+
+    deposits = _json_out(run(CREDITS, ["history", "--json"], home))["deposits"]
+    assert [d["id"] for d in deposits] == [1], deposits
+    assert deposits[0]["value"] == "25000 miles", deposits[0]
+
+
+def test_a_real_companion_cert_stays_in_the_archive():
+    """Value is the classifier, not the type token. "1 certificate" is not a grant."""
+    home = _archived_deposit_store_home("archived-cert-")
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+
+    assert 3 not in {e["id"] for e in payload["archived_deposits_relocated"]}, payload
+    assert {e["id"]: e["to_type"] for e in payload["types_renamed"]}[3] == "COMPANION", payload
+    assert 3 not in {d["id"] for d in _json_out(run(CREDITS, ["history", "--json"], home))["deposits"]}
+
+
+def test_relocating_an_archived_grant_keeps_the_note_somebody_wrote():
+    """The used fields are wrong about the lifecycle but real as a record.
+
+    v2 moves a record verbatim apart from its type token; the archive path holds
+    to that rather than dropping fields the current formatter does not emit.
+    """
+    home = _archived_deposit_store_home("archived-note-")
+    run(CREDITS, ["migrate", "--json"], home)
+    with open(os.path.join(home, ".claude", "travel-credits", "inventory.md")) as fh:
+        after = fh.read()
+    assert "Reported used by Baruch 2026-08-09" in after, after
+
+
+def test_archived_grant_never_reappears_as_a_spendable_credit():
+    """The bug's user-visible cost: it read as inventory and got marked used."""
+    home = _archived_deposit_store_home("archived-not-active-")
+    run(CREDITS, ["migrate", "--json"], home)
+    active = _json_out(run(CREDITS, ["list", "--json"], home))
+    assert [c["id"] for c in active["credits"]] == [9], active
+
+
+def test_archive_relocation_is_idempotent():
+    home = _archived_deposit_store_home("archived-idem-")
+    run(CREDITS, ["migrate", "--json"], home)
+    second = _json_out(run(CREDITS, ["migrate", "--json"], home))
+    assert second["changed"] is False, second
+    assert second["archived_deposits_relocated"] == [], second

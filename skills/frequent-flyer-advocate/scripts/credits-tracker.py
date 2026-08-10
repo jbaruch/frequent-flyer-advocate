@@ -61,7 +61,14 @@ INVENTORY_PATH = os.path.join(CREDITS_DIR, "inventory.md")
 # v3: COMP is renamed COMPANION. The abbreviation reads as "compensation" and means
 #     Companion Certificate, and nothing rejected the misreading — every COMP row in
 #     the live store was a mistyped miles or points grant.
-SCHEMA_VERSION = 3
+# v4: miles and points grants sitting in the ARCHIVE move to Compensation History,
+#     the same correction v2 made for Active. v2 scoped its scan to Active, so an
+#     archived grant was never classified by Value and fell through to v3's rename,
+#     landing as COMPANION — the one outcome v3's own note says no COMP row deserved.
+#     A grant is in the account from the moment it is made, so the used state those
+#     rows carry records an event that cannot happen; the fields ride along verbatim
+#     rather than being dropped, since they are a real note somebody wrote.
+SCHEMA_VERSION = 4
 
 # A value like "25000 miles", "30,000 Hilton Honors points", "8,000 SkyMiles",
 # "25,000 American AAdvantage miles". Deliberately anchored on the trailing unit
@@ -867,8 +874,10 @@ def deposit_unit(body_lines):
     return None
 
 
-def relocate_deposits(content):
-    """v1 -> v2: move miles/points grants out of Active into Compensation History.
+def relocate_deposits(content, section="active"):
+    """Move miles/points grants out of `section` into Compensation History.
+
+    v1 -> v2 for Active; v3 -> v4 for the archive.
 
     They never had a held-then-applied lifecycle — the balance is in the loyalty
     account from the moment of the grant — so Active counted them as available
@@ -878,7 +887,7 @@ def relocate_deposits(content):
     survives, including ones the current formatter does not know. Returns
     (content, moved) where moved lists {id, from_type, to_type}.
     """
-    start_marker, end_marker = section_markers("active")
+    start_marker, end_marker = section_markers(section)
     if content.find(start_marker) == -1 or content.find(end_marker) == -1:
         return content, []
 
@@ -918,7 +927,7 @@ def relocate_deposits(content):
         return "\n".join(out)
 
     content = ensure_compensation_section(content)
-    content = replace_section_block(content, "active", render(preamble, kept))
+    content = replace_section_block(content, section, render(preamble, kept))
 
     comp_start, comp_end = section_markers("compensation")
     comp_block_start = content.index("\n", content.find(comp_start)) + 1
@@ -1641,6 +1650,11 @@ def cmd_migrate(args):
     # legacy COMP row valued in miles is moved on its Value first and never picks up a
     # COMPANION label on the way out.
     migrated, renamed = rename_legacy_types(migrated)
+    # v3 -> v4 catches what v2 could not reach. v2 scanned Active only, so an archived
+    # grant reached rename_legacy_types still typed COMP and became COMPANION. Running
+    # after the rename means this re-reads those rows and reclassifies them on Value,
+    # which is the same authority v2 used and does not depend on the label v3 left.
+    migrated, archived_moved = relocate_deposits(migrated, section="archive")
     changed = migrated != content
     if changed:
         write_inventory(migrated)
@@ -1658,6 +1672,7 @@ def cmd_migrate(args):
     if args.json:
         emit_json({"schema_version": SCHEMA_VERSION, "changed": changed,
                    "unconsumable": unconsumable, "deposits_relocated": moved,
+                   "archived_deposits_relocated": archived_moved,
                    "types_renamed": renamed, **stats})
         return
 
@@ -1673,6 +1688,9 @@ def cmd_migrate(args):
         print(f"   ⚠️  Unreadable version line: {stats['unreadable']}")
     for entry in moved:
         print(f"   Moved #{entry['id']} to compensation history: "
+              f"[{entry['from_type']}] → [{entry['to_type']}]")
+    for entry in archived_moved:
+        print(f"   Moved #{entry['id']} out of the archive to compensation history: "
               f"[{entry['from_type']}] → [{entry['to_type']}]")
     for entry in renamed:
         print(f"   Renamed #{entry['id']}: [{entry['from_type']}] → [{entry['to_type']}]")
