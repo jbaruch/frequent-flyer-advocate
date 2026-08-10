@@ -18,8 +18,9 @@ dangling symlink (cloud folder not mounted), or a plain file sitting where the s
 should be all fail loudly.
 
 Keep an inventory in cloud storage and leave it unlinked on a new machine, and
-auto-creating an empty one forks the data into two diverging copies. Neither store
-guesses.
+auto-creating an empty one forks the data into two diverging copies. An inventory
+sitting unlinked in cloud storage is indistinguishable from an absent one, which is why
+neither store guesses and why nothing is created unasked.
 
 ## Check readiness
 

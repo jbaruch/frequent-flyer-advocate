@@ -48,8 +48,7 @@ Before the first `credits-tracker.py` or `complaints-bank.py` call, run each sto
 For anything other than `0`, follow
 [references/store-bootstrap.md](references/store-bootstrap.md) — it carries the commands,
 the question to put to the user, and the dangling-symlink case. Never create a store
-unasked: an inventory sitting unlinked in cloud storage is indistinguishable from an
-absent one, and creating a second forks the data.
+unasked.
 
 Once both stores report ready, proceed immediately to Step 2.
 
