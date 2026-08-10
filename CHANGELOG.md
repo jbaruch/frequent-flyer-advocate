@@ -1,5 +1,13 @@
 # Changelog
 
+### Fixed
+
+- `publish.yml` passes `stamp-changelog: true`, so the pipeline writes the `## <version> — <date>` heading instead of leaving it to the author. Resolves #32. The input defaults to `false` in the reusable workflow, so the stamp step's `if: inputs.stamp-changelog` never fired and `context-artifacts` CHANGELOG Hygiene put the heading on the author — with nothing failing when one was skipped. `tesslio/patch-version-publish` bumped the manifest and published regardless, thirteen times.
+  - An author-written heading was always a guess. The version a PR will publish as is not knowable while the PR sits in review: PR #25 carried `## 0.9.26` until 0.9.26 was taken out from under it. The stamp step reads the version the publish step is about to assign, so the heading cannot be stale.
+  - Authors now add un-headed `### ` blocks at the top of `CHANGELOG.md` and the pipeline heads them. This entry is written in that shape.
+- **Backfilled 0.9.14 through 0.9.26** — thirteen published versions with no CHANGELOG entry. `CHANGELOG.md` jumped from `## 0.9.27` straight to `## 0.9.13` while all thirteen bump commits sat on `main`. Reconstructed from the merge commits and their diffs; each heading carries the date of that version's `Bump …` commit, which is the date it actually published. The stretch is almost entirely CI and reviewer-architecture churn — four successive reviewer migrations (gh-aw upgrade → Codex CLI → central fleet reviewer → PR-time trigger), the move to the canonical reusable publish workflow, and a gitignore change that landed, reverted, and re-landed across 0.9.23–0.9.25.
+  - `context-writing-style` names CHANGELOG as where rule rationale and incident detail live, so the gap cost more than tidiness — rules point at an archive that was lying about what shipped.
+
 ## 0.9.28 — 2026-08-10
 
 ### Added
