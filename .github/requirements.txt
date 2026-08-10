@@ -1,1 +1,20 @@
-pyright==1.1.408
+# Fully resolved, hash-pinned dependency set for .github/scripts/pre-publish-gate.sh.
+#
+# Generated — do not hand-edit. Regenerate with:
+#   python3 .github/scripts/lock-requirements.py
+#
+# The gate installs with --require-hashes, so an artifact whose digest is not listed here
+# aborts the run rather than executing. Dependabot bumps the top-level pin; rerun the
+# generator to relock the transitive tree behind it.
+
+nodeenv==1.10.0 \
+    --hash=sha256:5bb13e3eed2923615535339b3c620e76779af4cb4c6a90deccc9e36b274d3827 \
+    --hash=sha256:996c191ad80897d076bdfba80a41994c2b47c68e224c542b48feba42ba00f8bb
+
+pyright==1.1.408 \
+    --hash=sha256:090b32865f4fdb1e0e6cd82bf5618480d48eecd2eb2e70f960982a3d9a4c17c1 \
+    --hash=sha256:f28f2321f96852fa50b5829ea492f6adb0e6954568d1caa3f3af3a5f555eb684
+
+typing-extensions==4.16.0 \
+    --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8 \
+    --hash=sha256:dc983d19a509c94dba722ee6abd33940f7c05a89e243c47e907eb4db6f1a43e5

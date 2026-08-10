@@ -531,6 +531,44 @@ def test_wrong_shape_is_caught_in_every_mode():
         assert payload["error"] == "metadata_invalid_shape", f"{args}: {payload}"
 
 
+def test_unsafe_inflation_factors_are_rejected():
+    # A factor below 1 shrinks the count instead of padding it, and json.loads accepts NaN
+    # and Infinity. Before this check, observed_inflation: -1 turned a 200-char letter into
+    # an effective -200 against a 100 limit and reported FITS.
+    d = _mktemp("ffa-inflation-")
+    for i, value in enumerate(["-1", "0", "0.5", "NaN", "Infinity"]):
+        path = os.path.join(d, f"infl-{i}.json")
+        body = ('{"airlines": {"ZZ": {"channels": {"web_form": {"char_limit": 100, '
+                '"counting_method": "unknown", "observed_inflation": VALUE}}}}}')
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(body.replace("VALUE", value))
+        payload = failure(["--airline", "ZZ", "--metadata", path, "--stdin"],
+                          stdin_text="x" * 200)
+        assert payload["error"] == "metadata_invalid_shape", f"{value}: {payload}"
+        assert payload["at"].endswith("observed_inflation"), f"{value}: {payload}"
+
+
+def test_inflation_of_exactly_one_is_allowed():
+    # 1.0 means "no padding needed" — a legitimate record for a form whose counting method
+    # is unidentified but known not to inflate. Only below 1 is unsafe.
+    md = write_metadata(one_airline(counting_method="unknown", observed_inflation=1.0))
+    rep, _ = report(["--airline", "ZZ", "--metadata", md, "--file", write_letter("z" * 100)])
+    assert rep["effective_count"] == rep["worst_count"], rep
+
+
+def test_skill_does_not_stand_up_a_private_metadata_store():
+    # stateful-artifacts: a user-owned metadata copy the skill tells people to accumulate
+    # limits in would be state with no owner, schema, or migration path. The live --limit
+    # supersedes the recorded value every run, so the copy is unnecessary as well.
+    skill = os.path.normpath(os.path.join(HERE, "..", "SKILL.md"))
+    with open(skill, encoding="utf-8") as f:
+        text = f.read()
+    for line in text.split("\n"):
+        if "--metadata" in line:
+            assert "Do not" in line or "not stand up" in line, \
+                f"SKILL.md directs the agent at a private metadata copy:\n  {line.strip()}"
+
+
 def test_shipped_metadata_passes_its_own_validator():
     r = run(["--list-airlines"])
     assert r.returncode == FITS, f"the shipped metadata must validate:\n{r.stderr}"

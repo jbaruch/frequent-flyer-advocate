@@ -363,13 +363,14 @@ Neither belongs in the installed plugin's metadata — `tessl install` overwrite
 observation is lost. Route them instead:
 
 - **This session** — the user reports the form's maximum: rerun with `--limit <max>`.
-- **This machine, durably** — copy `.tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/airline-form-metadata.json`
-  somewhere the user owns, record the verified `char_limit` there, and pass
-  `--metadata <their-copy>` on later runs.
-- **Everyone** — tell the user both numbers are worth upstreaming to
+- **Every later session** — tell the user both numbers are worth upstreaming to
   `jbaruch/frequent-flyer-advocate`: the airline code, the channel, the form's stated
   maximum, the count the script reported, and the count the form reported. That last pair
   is what identifies the counting method and retires the inflation margin.
+
+Do not stand up a private copy of the metadata for the user to accumulate limits in. The
+live limit already wins on every run, so a local copy buys nothing and would be a stateful
+artifact with no owner, no schema, and no migration path.
 
 Proceed immediately to Step 10.
 

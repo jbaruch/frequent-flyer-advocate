@@ -241,9 +241,20 @@ def validate_metadata(md, path):
             if not isinstance(formatting, dict):
                 _bad_shape(path, f"{where}.formatting", "an object", formatting)
             inflation = channel.get("observed_inflation")
-            if inflation is not None and (isinstance(inflation, bool)
-                                          or not isinstance(inflation, (int, float))):
-                _bad_shape(path, f"{where}.observed_inflation", "a number", inflation)
+            if inflation is not None:
+                if isinstance(inflation, bool) or not isinstance(inflation, (int, float)):
+                    _bad_shape(path, f"{where}.observed_inflation", "a number", inflation)
+                # json.loads accepts NaN and Infinity, and a factor below 1 shrinks the
+                # count instead of padding it — either way the margin stops being a safety
+                # bound and an overflowing letter can be judged FITS.
+                if not math.isfinite(inflation) or inflation < 1:
+                    die("metadata_invalid_shape",
+                        f"{path}: {where}.observed_inflation must be a finite number "
+                        f"of at least 1, got {inflation!r}. The factor pads the worst count "
+                        f"to cover an unidentified counting method; below 1 it would shrink "
+                        f"it and let an overflowing letter pass.",
+                        path=path, at=f"{where}.observed_inflation",
+                        expected="a finite number >= 1", given=inflation)
 
 
 def read_letter(args):
