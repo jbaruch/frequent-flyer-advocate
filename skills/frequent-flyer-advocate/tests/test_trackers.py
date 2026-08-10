@@ -1468,14 +1468,37 @@ def test_a_malformed_reference_date_is_fatal_not_ignored():
     assert "not be ignored" in r.stderr, r.stderr
 
 
-def test_the_reference_date_defaults_to_the_wall_clock():
-    """Unset is the production path: no override, real clock, records dated today."""
-    home = _mktemp("clock-default-")
-    run(CREDITS, ["init", "--default"], home, today=None)
-    added = _json_out(run(CREDITS, ["add", "--json", "--type", "VOUCHER", "--desc", "Now",
-                                    "--value", "1.00"], home, today=None))
+def test_the_reference_date_falls_through_to_the_module_clock_when_unset():
+    """Unset is the production path — it must reach the clock, not a frozen default.
+
+    Asserted against a stubbed clock rather than the real one: comparing to
+    `date.today()` at assertion time is itself a wall-clock dependency, and it races
+    the subprocess across midnight.
+    """
     import datetime
-    assert added["added"]["added"] == datetime.date.today().isoformat(), added
+
+    class _FixedClock:
+        @staticmethod
+        def now():
+            return datetime.datetime(2019, 7, 4, 12, 0, 0)
+
+        @staticmethod
+        def strptime(value, fmt):
+            return datetime.datetime.strptime(value, fmt)
+
+    tracker = _load_tracker()
+    setattr(tracker, "datetime", _FixedClock)
+    saved = os.environ.pop(tracker.TODAY_ENV, None)
+    try:
+        assert tracker.reference_date() == datetime.date(2019, 7, 4), \
+            "unset must fall through to the module's clock"
+        # And the override still wins over it.
+        os.environ[tracker.TODAY_ENV] = "2020-01-02"
+        assert tracker.reference_date() == datetime.date(2020, 1, 2)
+    finally:
+        os.environ.pop(tracker.TODAY_ENV, None)
+        if saved is not None:
+            os.environ[tracker.TODAY_ENV] = saved
 
 
 # ── line-oriented store: no value may become structure ────────────────────────
