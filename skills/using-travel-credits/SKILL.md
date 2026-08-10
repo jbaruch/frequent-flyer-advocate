@@ -27,7 +27,7 @@ Explicit chains:
 - Step 3 continues to the calling step only when the store is wholly readable.
   Records it could not consume mean every later command returns a subset, so it
   continues to Step 9 and stops instead
-- Step 3 invoked directly, because the user asked to migrate, finishes there
+- Step 3 invoked directly finishes there
 - Step 9 chains back exactly once, to Step 2, and only for a missing store
 - Step 2 re-runs Step 1 once, then proceeds or continues to Step 9; it never loops
 - Any step reporting a failure continues to Step 9 (Handle Errors)
@@ -117,8 +117,7 @@ plugin, `unreadable` carry a version line that does not parse. Migration leaves
 both alone by design, and every later command omits them.
 
 - Both zero — the store is wholly readable. Reached from Steps 4-8, continue to
-  the step that called it. Invoked directly because the user asked to migrate,
-  report the counts and finish here
+  the step that called it. Invoked directly, report the counts and finish here
 - Either above zero — continue to Step 9 and stop. Do not fall through to the
   calling step: `list`, `expiring`, and `check` would return a subset while
   reading as the whole store, and `add` would write against an inventory it
@@ -228,11 +227,10 @@ store, which this skill forbids. Finish here.
   parse as an integer, which means the store was hand-edited or truncated.
   Report the count and stop. Repairing it is the user's action — this skill
   will not guess at the intended version.
-- Unknown `--id` on Step 8. The id is not in the active section, most often
-  because the credit was already marked used and now sits in the archive. Ids
-  are stable — a record keeps its own through archiving — so re-run Step 4 to
-  see what is still active rather than assuming a renumbering that does not
-  happen.
+- Unknown `--id` on Step 8. The id is not in the active section. The usual cause
+  is a credit already marked used, which now sits in the archive under that same
+  id — ids are stable and a record keeps its own through archiving. Report that
+  and stop; listing the active credits is Step 4, on the user's next ask.
 - Rejected `--type` on Step 7. Read `--help` for the accepted set. Never guess
   from an abbreviation's plain-English reading.
 
