@@ -1,5 +1,11 @@
 # Changelog
 
+### Fixed
+
+- Schema v4 relocates miles and points grants stranded in the archive. v2 made this correction for Active only, so a grant already marked used was never classified by its `Value`, reached v3 still typed `COMP`, and came out `COMPANION` — the one outcome v3's own note rules out. Found in a live store, where two SkyMiles bonuses read as spendable Delta credits and were marked used during an unrelated drain.
+- A relocated row sheds `Used date` and `Used note`. Compensation records have no used state, and a grant is in the account from the moment it is made, so the marking asserts a redemption that could not have happened. The removed values are reported as `dropped_used_state` on the migration output. An earlier cut of this change kept the fields, which left the record shape contradicting its own contract.
+- `relocate_deposits()` takes the section it scans, so v2 and v4 are one function against `active` and `archive` and classification cannot drift between them. Consumers on 0.9.34 or earlier reading a v4 store take the documented `skipped_newer` path; update the plugin, then re-run `migrate`.
+
 ## 0.9.34 — 2026-08-10
 
 ### Added

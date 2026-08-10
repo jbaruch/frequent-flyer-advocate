@@ -86,11 +86,13 @@ Every writer promises: writes go through `credits-tracker.py`, never a hand edit
 
 ## Versioning
 
-Current version: **3**, the `SCHEMA_VERSION` constant in `credits-tracker.py`.
+Current version: **4**, the `SCHEMA_VERSION` constant in `credits-tracker.py`.
 
 **v1 → v2** moved miles and points grants out of Active into Compensation History and gave them the `MILES` / `POINTS` types. They never had a held-then-applied lifecycle, so Active counted them as available indefinitely and `use` was the only exit — recording an application event that never happened. A record is relocated when its `Value` names one of those two units; anything else stays where it is, so a genuine companion certificate valued "1 certificate" is untouched. The record's block moves verbatim apart from its type token, so fields the formatter does not know survive.
 
 **v2 → v3** renames the `COMP` type to `COMPANION`. `COMP` reads as "compensation" and means Companion Certificate; nothing rejected the misreading, and every `COMP` row in the live store turned out to be a mistyped miles or points grant. The rename runs after relocation, so a `COMP` row valued in miles leaves on its `Value` and is never labelled `COMPANION` on the way out. `add --type COMP` now fails with a message naming the replacement and pointing a miles grant at `MILES` / `POINTS`. Retired tokens live in `RENAMED_TYPES`.
+
+**v3 → v4** applies the v2 relocation to the archive. v2 scoped its scan to Active, so a miles or points grant already marked used was never classified by its `Value` — it reached the v3 rename still typed `COMP` and came out `COMPANION`, the one label v3's own note says no `COMP` row deserved. v4 re-reads the archive on `Value`, the same authority v2 used, so the outcome does not depend on the label v3 left. A relocated row sheds `Used date` and `Used note`: a compensation record has no used state, and a grant is in the loyalty account from the moment it is made, so the marking asserts a redemption that could not have happened. The removed values are reported on the migration's output as `dropped_used_state` rather than discarded quietly. Reported separately from v2's moves as `archived_deposits_relocated`.
 
 A writer stamps the record it is itself writing — `format_credit()` emits the current version on every record it formats. It does **not** stamp records it did not author, and no reader consumes a record that carries no version field.
 
