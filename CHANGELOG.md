@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.9.29 — 2026-08-10
+
 ### Fixed
 
 - `publish.yml` passes `stamp-changelog: true`, so the pipeline writes the `## <version> — <date>` heading instead of leaving it to the author. Resolves #32. The input defaults to `false` in the reusable workflow, so the stamp step's `if: inputs.stamp-changelog` never fired and `context-artifacts` CHANGELOG Hygiene put the heading on the author — with nothing failing when one was skipped. `tesslio/patch-version-publish` bumped the manifest and published regardless, thirteen times.
