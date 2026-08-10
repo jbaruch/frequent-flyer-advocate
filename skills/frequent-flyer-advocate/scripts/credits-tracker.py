@@ -702,10 +702,18 @@ def write_inventory(content):
 def is_readable_version(credit):
     """Whether this script may consume a parsed record.
 
-    A record stamped newer than SCHEMA_VERSION was written by an updated owner.
-    Per coding-policy: stateful-artifacts Migration Policy a lagging reader
-    treats it as no usable prior state and leaves it for that owner, rather
-    than reading it under the wrong shape or rewriting it back down.
+    Only SCHEMA_VERSION exactly, per coding-policy: stateful-artifacts Migration
+    Policy. Every caller of this script other than the owner skill is a non-owner
+    reader, and the policy has a reader treat an off-version record as read-only
+    "no usable prior state" in both directions:
+
+    - Newer: written by an updated owner. A lagging reader must not read it under
+      the wrong shape, nor rewrite it back down.
+    - Older: the owner has not upgraded it yet. A non-owner must not migrate, so
+      it declines the record and leaves it for the owner's `migrate` run.
+
+    A record with no version line predates versioning and reads as version 1 —
+    documented compatibility, not an off-version record.
     """
     raw = credit.get("schema_version")
     if raw is None:
@@ -721,13 +729,18 @@ def is_readable_version(credit):
               f"this script's {SCHEMA_VERSION} — skipping it. Update the plugin to read it.",
               file=sys.stderr)
         return False
+    if version < SCHEMA_VERSION:
+        print(f"WARNING: credit #{credit.get('id')} is schema version {version}, older than "
+              f"this script's {SCHEMA_VERSION} — skipping it. Run `migrate` from "
+              f"skills/using-travel-credits to upgrade the store.", file=sys.stderr)
+        return False
     return True
 
 
 def parse_credits(content, section="active"):
     """Parse credit entries from the inventory file.
 
-    Records newer than this script's SCHEMA_VERSION are omitted — see
+    Records off SCHEMA_VERSION in either direction are omitted — see
     is_readable_version(). Callers that must account for every record
     regardless of version (next_id) work from the raw content instead.
     """

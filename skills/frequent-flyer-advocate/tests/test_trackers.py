@@ -979,9 +979,14 @@ def test_newer_schema_version_is_skipped_and_its_id_reserved():
         f"id must not be reused over an unreadable record:\n{added.stdout}")
 
 
-def test_migrate_upgrades_an_explicitly_older_version():
-    """An explicitly older record is stepped up to SCHEMA_VERSION, not left stale."""
-    home = _mktemp("schemaver-older-")
+def test_a_non_owner_read_declines_an_older_record():
+    """An older record is 'no usable prior state' to a reader, not stale data to consume.
+
+    Migration Policy reserves upgrading to the owner. Every caller other than the
+    owner skill is a non-owner reader, so it must decline an off-version record
+    rather than read it under a shape the owner has since moved past.
+    """
+    home = _mktemp("schemaver-nonowner-read-")
     run(CREDITS, ["init", "--default"], home)
     run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Old-shape credit",
                   "--value", "15.00", "--airline", "DL"], home)
@@ -992,13 +997,20 @@ def test_migrate_upgrades_an_explicitly_older_version():
     with open(inventory, "w") as fh:
         fh.write(text.replace("- **Schema version**: 1", "- **Schema version**: 0"))
 
+    listed = run(CREDITS, ["list", "--json"], home)
+    assert _json_out(listed)["count"] == 0, "an older record must not be consumed"
+    assert "older than" in listed.stderr, f"the skip must be reported:\n{listed.stderr}"
+    assert "migrate" in listed.stderr, "the warning must name the recovery"
+
+    # The owner's migrate is what makes it readable again.
     payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
     assert payload["upgraded"] == 1, payload
 
     with open(inventory) as fh:
         after = fh.read()
     assert "- **Schema version**: 0" not in after, f"stale version survived:\n{after}"
-    assert "Old-shape credit" in run(CREDITS, ["list"], home).stdout
+    assert _json_out(run(CREDITS, ["list", "--json"], home))["count"] == 1, \
+        "the record must be readable once the owner has upgraded it"
 
 
 def test_migrate_does_not_rewrite_a_version_line_over_spacing():

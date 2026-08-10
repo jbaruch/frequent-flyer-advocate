@@ -89,7 +89,9 @@ The stamp is a text-level insert, not a parse-and-reformat of the whole store. R
 
 Only this skill migrates, and it migrates through one explicit operation: the `migrate` subcommand, reached from Step 3.
 
-The owner migrates what it is about to consume. Migration Policy has the owner detect an older record on read, upgrade it, and rewrite it — so the router runs Step 3 ahead of every store-touching step (4-8), not only when a user asks to migrate. Older records therefore do not survive an owner read; they survive a *non-owner* one, which is the point.
+The owner migrates what it is about to consume. Migration Policy has the owner detect an older record on read, upgrade it, and rewrite it — so the router runs Step 3 ahead of every store-touching step (4-8), not only when a user asks to migrate.
+
+A non-owner does the opposite: it declines the record. `parse_credits()` consumes only records at `SCHEMA_VERSION` exactly, omitting anything off-version in either direction with a per-record stderr warning naming the recovery. Older means the owner has not upgraded it yet; newer means the owner is ahead of this reader. Both are read-only *no usable prior state*, and neither is a record a non-owner may migrate. An unversioned record predates versioning and reads as version 1 — documented compatibility, not an off-version record.
 
 `write_inventory()` deliberately does not migrate. Every skill in the writer table below calls `credits-tracker.py` directly, so a migration on the write path would run under a non-owner writer — which Migration Policy reserves to the owner. A non-owner's `add` or `use` therefore leaves everyone else's records at whatever version they carry; the next owner run upgrades them.
 
@@ -106,6 +108,6 @@ The owner migrates what it is about to consume. Migration Policy has the owner d
 
 `upgrade_record_body()` is the per-step transform. It is identity today — version 1 is the first version and no shipped record predates it — and exists so a future bump adds one branch rather than inventing the migration machinery under time pressure.
 
-A record newer than `SCHEMA_VERSION` is not consumed either: `parse_credits()` omits it with a warning, per Migration Policy's rule that a lagging reader treats it as no usable prior state. An owner that cannot read a record must not rewrite it.
+An owner that cannot read a record must not rewrite it, which is why `migrate` leaves a newer record alone rather than stepping it down.
 
 Bump `SCHEMA_VERSION` only alongside a migration here. While `jbaruch/jbaruch-travel-policy` still ships its own copy of the script, a bump also falls under `stateful-artifacts` Cross-Pipeline Schema Bumps — two independently-released writers share this store, and the rollout has to account for both. Version 1 is safe under that constraint because both copies' parsers preserve records they did not write and ignore fields they do not know. A version 2 would not be. Removing the duplicate is tracked as the prerequisite in [#30](https://github.com/jbaruch/frequent-flyer-advocate/issues/30).
