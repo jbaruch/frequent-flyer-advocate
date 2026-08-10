@@ -1410,6 +1410,48 @@ def test_update_reaches_a_deposit_but_still_refuses_an_expiry():
     assert _json_out(r)["error"] == "expiry_not_valid_for_deposit", r.stdout
 
 
+# ── line-oriented store: no value may become structure ────────────────────────
+
+def test_a_newline_in_a_value_cannot_inject_record_structure():
+    """The record format is line-oriented, so a newline in a value becomes structure.
+
+    Demonstrated before the guard existed: `update --description` carrying a `### #99`
+    line spliced in a whole record and the store listed id 99 in place of id 1, and
+    `add --value` carrying an `Expiry` line wrote an expiry the caller never passed.
+    """
+    home = _voucher_home("inject-")
+    injections = [
+        (["update", "--json", "--id", "1", "--description",
+          "Pwned\n\n### #99 — [ECREDIT] Injected\n- **Value**: 99999.00"], "description"),
+        (["update", "--json", "--id", "1", "--value", "5.00\n- **Expiry**: 2099-01-01"], "value"),
+        (["add", "--json", "--type", "VOUCHER", "--desc", "Second",
+          "--value", "5.00\n- **Expiry**: 2099-01-01"], "value"),
+        (["add", "--json", "--type", "VOUCHER", "--desc",
+          "X\n### #98 — [ECREDIT] Injected", "--value", "1.00"], "description"),
+        (["use", "--json", "--id", "1", "--note", "ok\n- **Value**: 0"], "note"),
+    ]
+    for argv, field in injections:
+        r = run(CREDITS, argv, home)
+        assert r.returncode != 0, f"{argv[0]} accepted a newline in --{field}: {r.stdout}"
+        payload = _json_out(r)
+        assert payload["error"] == "multiline_value", payload
+        assert payload["fields"] == [field], payload
+
+    listed = _json_out(run(CREDITS, ["list", "--json"], home))
+    assert [c["id"] for c in listed["credits"]] == [1], f"the store must be untouched: {listed}"
+    assert listed["credits"][0]["description"] == "150 voucher"
+    assert "expiry" not in listed["credits"][0], "no field the caller never passed"
+
+
+def test_a_carriage_return_is_rejected_too():
+    """A lone CR splits a line in the same way; the guard covers both."""
+    home = _voucher_home("inject-cr-")
+    r = run(CREDITS, ["update", "--json", "--id", "1",
+                      "--confirmation", "ABC\r- **Value**: 0"], home)
+    assert r.returncode != 0
+    assert _json_out(r)["error"] == "multiline_value", r.stdout
+
+
 # ── compensation deposits: history, not inventory ─────────────────────────────
 
 _V1_STORE_WITH_DEPOSITS = """# Flight Credits, Vouchers & Upgrade Certificates Inventory

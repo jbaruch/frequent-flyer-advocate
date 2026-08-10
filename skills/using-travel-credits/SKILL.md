@@ -236,10 +236,24 @@ python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-adv
 
 For details that arrive after the credit was logged — an expiry, a voucher number, a
 case reference, restrictions. Pass only the fields that changed; the rest are left as
-they are. At least one is required.
+they are.
 
-`fields_changed` echoes what was written. A record already marked used cannot be
-edited; the payload says so rather than reporting it missing. Finish here.
+Success returns `updated` (`id`, `type`, `description`, `section`) and `fields_changed`.
+Report what changed from that, not from what you passed.
+
+Every failure exits non-zero and writes nothing:
+
+- `no_fields_given` — the call named no field. `updatable` lists what can be set.
+- `not_found` — no record with that id. Re-run Step 4 for a current one.
+- `record_is_archived` — the credit was marked used. It keeps the outcome `use`
+  recorded and is not editable; report that rather than retrying.
+- `invalid_expiry` — re-ask for the date in `YYYY-MM-DD` rather than retrying.
+- `expiry_not_valid_for_deposit` — the record is a deposit and has no expiry of its
+  own. Re-run without it.
+- `multiline_value` — a value carried a line break. `fields` names which. Record
+  fields are one line each; re-ask for a single-line value.
+
+Finish here.
 
 ## Step 10 — Mark a Credit Used
 

@@ -9,6 +9,7 @@
   - `--expiry` is validated before anything is written, so a rejected update leaves the store byte-identical rather than half-applied.
   - Deposits are reachable. #2 scoped this to the active section, which predates the Compensation History section — a case number can arrive late for a miles grant exactly as it can for a voucher, and both are current records. `--expiry` on a deposit is still refused, matching `add`.
   - An archived record reports `record_is_archived`, not `not_found`. A settled record is sitting right there, and "not found" would send the caller hunting for it. `use` recorded its outcome; editing it would rewrite history rather than complete it.
+  - A value carrying a line break is refused, on `add` and `use` as well as `update`. The record format is line-oriented, so a newline in a value is not stored as text — it becomes structure. Demonstrated before the guard: `update --description "Pwned\n### #99 — [ECREDIT] Injected"` spliced in a whole record and the store listed **id 99 in place of id 1**, and `add --value "5.00\n- **Expiry**: 2099-01-01"` wrote an expiry the caller never passed while `next_id` counted the injected heading. Rejected rather than escaped: no legitimate field is multi-line. The hole predates `update` — `add` and `use --note` had it too, and all three are closed together.
   - Router Step 9, with the steps after it renumbered.
 
 ### Changed

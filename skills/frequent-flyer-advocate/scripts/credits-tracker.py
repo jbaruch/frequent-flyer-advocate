@@ -1273,6 +1273,9 @@ def cmd_list(args):
 
 def cmd_add(args):
     content = read_inventory()
+    reject_multiline({flag: getattr(args, flag, None) for flag in
+                      ("description", "value", "expiry", "passenger", "airline",
+                       "brand", "confirmation", "restrictions")}, args.json)
     ctype = args.type.upper()
     if ctype in RENAMED_TYPES:
         # A retired token gets its own message. Falling through to the generic list
@@ -1364,6 +1367,7 @@ def cmd_add(args):
 
 def cmd_use(args):
     content = read_inventory()
+    reject_multiline({"note": getattr(args, "note", None)}, args.json)
 
     # A deposit has no use transition. The miles landed in the account on grant, and
     # once there they are fungible with the rest of the balance — the loyalty program
@@ -1419,6 +1423,31 @@ UPDATABLE_FIELDS = {
 }
 
 
+def reject_multiline(values, json_mode):
+    """Refuse any value carrying a line break before it reaches the store.
+
+    The record format is line-oriented: one field per line, `### #<id> — [TYPE] desc`
+    for a heading. A value containing a newline is not stored as text — it becomes
+    structure. `--value "5.00\\n- **Expiry**: 2099-01-01"` writes an expiry the caller
+    never passed, and a `--description` carrying a `### #` line splices in a whole
+    record, taking the id with it.
+
+    Rejected rather than escaped: no legitimate field is multi-line, and a store whose
+    values sometimes carry encoded newlines is harder to reason about than one where
+    they cannot appear. `values` is a mapping of flag name to value.
+    """
+    offenders = sorted(flag for flag, value in values.items()
+                       if isinstance(value, str) and ("\n" in value or "\r" in value))
+    if not offenders:
+        return
+    print(f"ERROR: {', '.join('--' + f for f in offenders)} may not contain a line break. "
+          f"Record fields are one line each; a newline would be stored as structure, not text.",
+          file=sys.stderr)
+    if json_mode:
+        emit_json({"error": "multiline_value", "fields": offenders})
+    sys.exit(1)
+
+
 def apply_field_updates(body, updates, indent):
     """Set each named field on a record's body lines, returning the new body.
 
@@ -1460,6 +1489,9 @@ def cmd_update(args):
     archive with a ghost and burns an id.
     """
     content = read_inventory()
+
+    reject_multiline({flag: getattr(args, flag, None)
+                      for flag in list(UPDATABLE_FIELDS) + ["description"]}, args.json)
 
     updates = {}
     for flag, label in UPDATABLE_FIELDS.items():
