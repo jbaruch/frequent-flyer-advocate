@@ -23,19 +23,24 @@ grounded in the airline's own published policies, vision statements, and federal
 - [references/flight-verification.md](references/flight-verification.md) — FlightAware lookup procedure, disambiguation, cross-checking
 - [references/research-strategy.md](references/research-strategy.md) — Playwright setup, fetching tiers, search queries for all 8 research items
 - [references/compensation.md](references/compensation.md) — severity tiers, compensation ranges, status multiplier
+- [scripts/letter-fit.py](scripts/letter-fit.py) — measures a draft against the airline's form character limit and flags markdown the form may render literally. Emits JSON on stdout in every mode. Run in Step 9 before presenting any form-mode letter: `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/letter-fit.py --airline <code> --file <draft>`. Backed by `scripts/airline-form-metadata.json`
 - [scripts/credits-tracker.py](scripts/credits-tracker.py) — flight credits/vouchers inventory, shared globally via `~/.claude/travel-credits/`
-- Run it with the full path: `python3 <this-skill-dir>/scripts/credits-tracker.py`
+- Run it with the full path: `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py`
 - Pass `--json` on every call from this skill
 - Read the returned fields; never parse the prose rendering
 - Diagnostics go to stderr; stdout carries one JSON object, failures included
-- [scripts/complaints-bank.py](scripts/complaints-bank.py) — past complaint history for pattern detection (shared globally via `~/.claude/complaint-bank/`). Run with full path: `python3 <this-skill-dir>/scripts/complaints-bank.py`
+- [scripts/complaints-bank.py](scripts/complaints-bank.py) — past complaint history for pattern detection, shared globally via `~/.claude/complaint-bank/`
+- Run it with the full path: `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py`
+- Pass `--json` on every call from this skill
+- Read the returned fields; never parse the prose rendering
+- Diagnostics go to stderr; stdout carries one JSON object, failures included
 
 ---
 
-## Storage Bootstrap (first run on this machine)
+## Step 1 — Bootstrap the Storage
 
-This is a one-time setup precondition for the workflow phases below, not a workflow phase
-itself. Both data stores live under `~/.claude/` so every skill shares one copy:
+One-time setup on a machine that has never run this skill. Both data stores live under
+`~/.claude/` so every skill shares one copy:
 
 - **Travel credits** — `~/.claude/travel-credits/` (shared with `jbaruch/travel-policy` — the
   two skills MUST point at the same directory)
@@ -54,9 +59,9 @@ bootstrap if missing:
 ```bash
 # Each store's `status` subcommand owns the readiness contract (no shell logic here):
 # exits 0 / 3 / 4 for ready / missing / invalid.
-# credits-tracker reports {"state", "store", "reason"}; branch on the exit code.
-python3 <this-skill-dir>/scripts/credits-tracker.py status --json
-python3 <this-skill-dir>/scripts/complaints-bank.py status
+# Both report {"state", "store", "reason"}; branch on the exit code.
+python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py status --json
+python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py status --json
 ```
 
 For each store reported `MISSING` (or `INVALID`), ask the user (via `AskUserQuestion`) whether they already
@@ -72,36 +77,37 @@ Then run the matching command (use the same wording for the complaint bank):
 
 ```bash
 # 1. Link an existing database (ask for the path first):
-python3 <this-skill-dir>/scripts/credits-tracker.py link --json --path "<existing-dir>"
+python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py link --json --path "<existing-dir>"
 # 2. Fresh at default:
-python3 <this-skill-dir>/scripts/credits-tracker.py init --json --default
+python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py init --json --default
 # 3. Fresh at custom path:
-python3 <this-skill-dir>/scripts/credits-tracker.py init --json --path "<dir>"
+python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py init --json --path "<dir>"
 ```
 
 If a command reports a **dangling symlink** (target missing), the cloud folder isn't mounted
-— tell the user rather than re-creating the store. Once both stores report `ready`, proceed.
+— tell the user rather than re-creating the store. Once both stores report `ready`, proceed
+immediately to Step 2.
 
 ---
 
-## Phase 1: Intake & Intelligent Questioning
+## Step 2 — Resolve Pending Complaints
 
-### First: check for pending complaints
-
-Make sure the **Storage Bootstrap** section above has run — if the complaint bank isn't set
-up yet, the command below will refuse to run and tell you to `init`/`link` first.
-
-Before anything else, run:
-`python3 <this-skill-dir>/scripts/complaints-bank.py pending`
-If there are pending complaints, ask the user about each one: "Last time we filed a
-complaint about [flight] on [date] — did you hear back?" Record the resolution with
+Run:
+`python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py pending --json`
+The response carries `pending` (each complaint's fields) and `count`. A `count` of 0 is a
+valid answer, not a failure. If there are pending complaints, ask the user about each one:
+"Last time we filed a complaint about [flight] on [date] — did you hear back?" Record the
+resolution with
 `resolve --id <id> --resolution <STATUS> --note "..."`. Use RESOLVED, PARTIAL, DENIED,
 or ESCALATED if they have an update. Use CLOSED if they never heard back or don't want
 to track it further. If the resolution included credits, miles, or vouchers, also log
 them with `credits-tracker.py add` so the travel credits inventory stays current.
-Then proceed with the new complaint.
 
-### Intake
+If nothing is pending, say nothing and proceed. Proceed immediately to Step 3.
+
+---
+
+## Step 3 — Gather the Incident Details
 
 Start by asking the user to describe what happened in their own words. Do NOT present a
 long questionnaire. Listen, then ask targeted follow-ups based on what's missing.
@@ -113,6 +119,22 @@ long questionnaire. Listen, then ask targeted follow-ups based on what's missing
 - Loyalty program tier/status (if any) and approximate years/miles of loyalty
 - **Desired outcome** — if not already stated, ask what they want (miles, voucher, refund,
   apology, or your recommendation). This shapes the remedy section — do not skip it.
+- **Submission channel** — how they will send it: web form, email, paper mail, or undecided.
+  Ask before drafting, never after.
+
+### If the channel is a web form
+
+Run `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/letter-fit.py --airline <code> --info` for what is
+already recorded about that airline's form. It emits JSON; read `metadata.channels` for the
+recorded limit and prefilled fields. Then fill the gaps from the user:
+
+- **Character limit** — ask them to read it off the form. Whatever they report is the live
+  value and outranks anything recorded; carry it to `letter-fit.py --limit <N>` in Step 9.
+  A `--info` limit is a prior observation, used only when the user cannot supply one.
+- **Fields the form captures separately** — passenger name, loyalty number, flight number,
+  date, route are typical. Anything the form collects is data the letter body can drop.
+
+Record both answers. Steps 8 and 9 need them.
 
 ### Context-dependent follow-ups
 
@@ -141,29 +163,41 @@ relevant.
 
 ### When you have enough
 
-Summarize what you understand back to the user and confirm before moving to verification.
+Summarize what you understand back to the user, then proceed immediately to Step 4 — the
+summary is a statement, not a checkpoint. Ask one question first only where a detail is
+missing or self-contradictory and its answer changes the letter.
 
-### Check prior compensation history
+---
+
+## Step 4 — Check Prior Compensation History
 
 Once you know the passenger name and airline, always run:
-`python3 <this-skill-dir>/scripts/credits-tracker.py list --json --passenger <name> --airline <code>`
+`python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py list --json --passenger <name> --airline <code>`
 
 The response carries `credits` (each with `id`, `type`, `description`, `value`, `passenger`,
 `expiry`, `days_left`, `expired`) and `count`. A `count` of 0 is a valid answer, not a failure.
 Note the result in your research documentation. If credits are found, use them as escalation
 leverage in the letter. If empty or unavailable, note that and continue.
 
-### Check complaint history
-
-Also run:
-`python3 <this-skill-dir>/scripts/complaints-bank.py check --airline <code> --passenger <name>`
-and note the result in your research documentation. If patterns exist (same category 2+
-times, prior DENIED complaints, same route recurring), hold them for Phase 4 — see the
-complaint-patterns rule for when to use them and when not to.
+Proceed immediately to Step 5.
 
 ---
 
-## Phase 2: Flight Verification
+## Step 5 — Check Complaint History
+
+Run:
+`python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py check --json --airline <code> --passenger <name>`
+The response carries `count`, `matches`, `category_patterns` and `secondary_patterns` (the
+groups of 2+ the script already judged), `resolutions`, `denied_count`, and `recurring`.
+Read those fields rather than recounting. Note the result in your research documentation,
+and hold any pattern for Step 8 — see the complaint-patterns rule for when to use them and
+when not to.
+
+Proceed immediately to Step 6.
+
+---
+
+## Step 6 — Verify the Flight
 
 Before researching policies or writing anything, verify the flight details against
 FlightAware. This prevents erroneous complaints and adds independently verified data
@@ -184,12 +218,13 @@ complete verification procedure. Key points:
 6. **Use verified data in the letter** — FlightAware's timestamps, delay duration, and
    cancellation records are independent evidence that strengthens the complaint.
 
-Do NOT proceed to policy research until the flight is verified or the user explicitly
-confirms the details are correct despite any discrepancies.
+Do NOT proceed to Step 7 on unverified details. Where FlightAware and the user's account
+conflict, ask the user which is correct and take their explicit confirmation as the
+resolution. Once the flight is verified or confirmed, proceed immediately to Step 7.
 
 ---
 
-## Phase 3: Dynamic Research
+## Step 7 — Research the Airline's Policies
 
 Once the airline is identified, research their specific policies and commitments. Quoting
 the airline's own words back to them is what makes the letter powerful.
@@ -208,16 +243,19 @@ queries). Key points:
 3. **Research gate:** do not proceed to writing until you have usable findings from items
    1–6 (see letter-quality rule for verbatim quote requirement)
 
-Always parallelize independent searches and fetches.
+Issue the 8 research items' searches and fetches concurrently within this step. This step
+still completes before Step 8 begins.
+
+Once the research gate is satisfied, proceed immediately to Step 8.
 
 ---
 
-## Phase 4: Letter Construction
+## Step 8 — Construct the Letter
 
 Build the letter using this structure. Every section has a strategic purpose.
 
-**Important: use your Phase 2 verification data.** Any flight data you confirmed via
-FlightAware in Phase 2 is verified fact — use it in the letter with explicit attribution
+**Important: use your Step 6 verification data.** Any flight data you confirmed via
+FlightAware in Step 6 is verified fact — use it in the letter with explicit attribution
 (e.g., "per FlightAware flight tracking records"). This is not fabrication; you already
 confirmed it. If FlightAware provided timestamps, delay durations, or flight status,
 these MUST appear in the incident narrative attributed to "publicly available flight
@@ -228,11 +266,11 @@ letter's strongest assets.
 Concise; include flight number, date, and loyalty tier if applicable.
 Example: "Diamond Medallion Member — Unacceptable Experience on DL1234, Feb 15, 2026"
 
-### 1. Opening: Establish the relationship
+### Opening — establish the relationship
 Lead with loyalty — years of patronage, miles flown, tier status, emotional connection to
 the brand. (See letter-quality rule for specific requirements.)
 
-### 2. Incident narrative
+### Incident narrative
 Chronological, factual, specific. Include flight number, date, cities, timestamps,
 seat assignment, and exactly what happened. Use dispassionate language — facts speak for
 themselves. Note crew/agent responses factually.
@@ -240,12 +278,12 @@ themselves. Note crew/agent responses factually.
 Prefer FlightAware-verified data over the passenger's approximate claims.
 (See letter-quality rule for specific requirements.)
 
-### 3. Impact statement
+### Impact statement
 Concrete consequences: financial losses, missed events, hours wasted, family stress.
 Quantify where possible. "The 11-hour delay caused me to miss my daughter's college
 graduation — an event that cannot be rescheduled."
 
-### 4. The airline's own words vs. reality
+### The airline's own words vs. reality
 Quote the airline's mission statement, vision, Customer Service Plan, or Contract of
 Carriage — then contrast with actual experience.
 
@@ -255,16 +293,16 @@ Carriage — then contrast with actual experience.
 > "[Airline CEO]'s letter to customers promises '[aspirational quote].' On Flight 1234,
 > that promise was broken when [specific failure]."
 
-### 5. Regulatory basis
+### Regulatory basis
 Cite specific regulations violated or that entitle the passenger to compensation —
 DOT rules, FAA Reauthorization Act provisions, or enforcement precedent. Be precise;
 cite the specific rule, not vague references to "federal regulations."
 
-### 6. Requested remedy
+### Requested remedy
 Specific, calibrated, reasonable but firm. Read [references/compensation.md](references/compensation.md)
 for severity tiers and ranges. Always request a response within 14–21 business days.
 
-### 7. Closing
+### Closing
 Express that you value the relationship and want to continue it, but make clear that the
 response will influence future loyalty. State — factually, not as a threat — that you are
 aware of your right to file a DOT complaint if the matter is not resolved satisfactorily.
@@ -273,17 +311,96 @@ aware of your right to file a DOT complaint if the matter is not resolved satisf
 Professional, measured, confident, and informed — never angry, sarcastic, or pleading.
 Concise but thorough.
 
+### Form-mode variant
+
+Long form is the default and stays unchanged for email and paper mail. When Step 3 recorded
+a **web form**, build a second, shorter variant instead:
+
+- Drop what the form captures in its own fields (Step 3 recorded which). The form shows the
+  agent those values already; repeating them spends the character budget twice.
+- Keep every mandatory element the letter-quality rule marks as surviving compression — the
+  loyalty tier in the opening sentence survives even when the loyalty number is dropped.
+- Write plain prose. Markdown bold, headings, bullets, blockquotes, and links may render as
+  literal punctuation in a plain-text field.
+
+Route on the channel Step 3 recorded:
+
+- **Web form** — proceed immediately to Step 9.
+- **Email or paper mail** — nothing to measure. Skip to Step 10.
+- **Undecided** — ask the user to choose now; the variant and the length budget both depend
+  on it. If they still decline to choose, build the long form, tell them a web form needs a
+  fitted variant, and skip to Step 10.
+
 ---
 
-## Phase 5: Escalation Guidance
+## Step 9 — Verify the Letter Fits the Form
+
+Form mode only. Never present a form-mode letter on your own character count. Write the
+draft to a file and measure it:
+
+```bash
+python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/letter-fit.py --airline <code> --file <draft-path>
+# pass --limit <N> whenever Step 3 got a live limit, recorded airline or not
+```
+
+Exit 0 means it fits, 1 means it overflows, 2 means the invocation or metadata is wrong.
+Every path emits one JSON object on stdout, failures included; read the verdict from it
+rather than recomputing anything.
+
+Presenting requires **both** exit 0 and an empty `formatting_warnings` array.
+
+- **Exit 1** — trim and rerun. Do not show the user an overflowing draft.
+- **Exit 0, `formatting_warnings` non-empty** — strip the flagged markup and rerun. Do not
+  present the draft on this pass.
+- **Exit 0, `formatting_warnings` empty** — present the letter. Quote `effective_count`,
+  `char_limit`, and `status` from the report; never substitute a count of your own. Where
+  `count_verified` is `false`, tell the user the count is unverified — the form's own counter
+  is the final word, and a draft measuring close to the limit may still be rejected by it.
+- **Exit 2** — stdout carries `{"error": <code>, "message": <text>}`. Fix what `message`
+  names, then rerun. Never fall back to counting by hand.
+
+Two different numbers can come back from a live form. Keep them apart:
+
+- The **limit** is the form's maximum. `--limit <N>` takes this and nothing else.
+- A limit the user read off the live form supersedes the recorded one. Pass it every
+  time you have it, including for an airline the metadata already covers.
+- The **counter reading** is what the form measured *this draft* at. It is calibration
+  evidence for the counting method. Never pass it to `--limit`.
+
+Neither belongs in the installed plugin's metadata — `tessl install` overwrites it and the
+observation is lost. Route them instead:
+
+- **This session** — the user reports the form's maximum: rerun with `--limit <max>`.
+- **Every later session** — tell the user both numbers are worth upstreaming to
+  `jbaruch/frequent-flyer-advocate`: the airline code, the channel, the form's stated
+  maximum, the count the script reported, and the count the form reported. That last pair
+  is what identifies the counting method and retires the inflation margin.
+
+Do not stand up a private copy of the metadata for the user to accumulate limits in. The
+live limit already wins on every run, so a local copy buys nothing and would be a stateful
+artifact with no owner, no schema, and no migration path.
+
+Proceed immediately to Step 10.
+
+---
+
+## Step 10 — Provide Escalation Guidance
 
 After presenting the letter, provide actionable next steps:
 
 **Where to send:**
-- Primary: executive customer relations email found during research
+- Check the airline's recorded channels first:
+  `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/letter-fit.py --airline <code> --info`
+- Follow `metadata.channel_notes` for that airline. It names known-dead or deprioritized
+  channels and the routing to use instead. Route around a channel it reports unreliable.
+- Primary (no note to the contrary): executive customer relations email found during research
 - Secondary: standard customer care (backup/paper trail)
 - Include any airline-specific submission forms
 - If the user already contacted general customer service, see escalation-output rule.
+- If Step 7 research turns up a channel change the metadata doesn't record, state it in the
+  escalation guidance and tell the user it is worth upstreaming to
+  `jbaruch/frequent-flyer-advocate` as a `channel_notes` update. Do not edit the installed
+  plugin's copy — `tessl install` overwrites it.
 
 **When to file a DOT complaint (airconsumer.dot.gov):**
 - **File IMMEDIATELY, in parallel with the complaint letter** for: denied boarding (this is
@@ -303,19 +420,20 @@ After presenting the letter, provide actionable next steps:
 - No response in 30 days → escalate to DOT
 - Inadequate initial response → reply once reiterating the request before escalating
 
+See escalation-output rule for what to include in output documents. Proceed immediately to
+Step 11.
+
 ---
 
-## After Completing the Letter, Escalation Plan, or Case Assessment
-
-See escalation-output rule for what to include in output documents.
-
-### File complaint to bank
+## Step 11 — File the Complaint to the Bank
 
 After the letter is finalized, always file it:
-`python3 <this-skill-dir>/scripts/complaints-bank.py file --airline <code> --flight <flight> --flight-date <YYYY-MM-DD> --route <ORIG-DEST> --passenger <name> --category <CAT> --severity <SEV> --summary "<1-2 sentences>" --outcome "<what was requested>"`
+`python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py file --json --airline <code> --flight <flight> --flight-date <YYYY-MM-DD> --route <ORIG-DEST> --passenger <name> --category <CAT> --severity <SEV> --summary "<1-2 sentences>" --outcome "<what was requested>"`
 
 If the user returns with a compensation outcome, log it in both systems:
-`python3 <this-skill-dir>/scripts/credits-tracker.py add --json --type VOUCHER --description "..." --value <amount> --passenger "..." --airline <code> --expiry <date> --restrictions "..."`
+`python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py add --json --type VOUCHER --description "..." --value <amount> --passenger "..." --airline <code> --expiry <date> --restrictions "..."`
 Returns `{"added": {…the stored record…}, "days_to_expiry": <int|null>}`. On a bad `--expiry` it returns
 `{"error": "invalid_expiry", …}`, exits non-zero, and writes nothing — re-ask for the date rather than retrying.
-`python3 <this-skill-dir>/scripts/complaints-bank.py resolve --id <id> --resolution <RESOLVED|PARTIAL|DENIED> --note "<what they got>"`
+`python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py resolve --json --id <id> --resolution <RESOLVED|PARTIAL|DENIED> --note "<what they got>"`
+
+Finish here.

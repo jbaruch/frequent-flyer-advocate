@@ -768,6 +768,100 @@ def test_check_reports_detections_on_an_empty_store():
     assert hotel["brands_detected"] == ["HILTON"], hotel
 
 
+# ── complaints-bank --json contract ───────────────────────────────────────────
+
+def _bank_json(args, home, stdin_text=None):
+    """Run complaints-bank with --json and return (payload, exit code)."""
+    r = run(BANK, args, home, stdin_text=stdin_text)
+    assert r.stdout.strip(), f"{args}: stdout empty under --json\n{r.stderr}"
+    return json.loads(r.stdout), r.returncode
+
+
+_AIRLINE_FILE = ["file", "--airline", "DL", "--flight", "DL1234",
+                 "--flight-date", "2026-01-15", "--route", "ATL-SFO",
+                 "--passenger", "J Baruch", "--category", "DELAY",
+                 "--severity", "MAJOR", "--summary", "6h delay", "--outcome", "refund"]
+
+
+def test_bank_json_every_subcommand_emits_one_object():
+    # script-delegation: a skill-invoked deterministic script emits structured data. Every
+    # subcommand, success and failure alike, has to parse — an empty stdout reads as a
+    # crash rather than a result.
+    home = fresh_home()
+    payload, code = _bank_json(["status", "--json"], home)
+    assert payload["state"] == "missing" and code == 3, payload
+
+    payload, code = _bank_json(["list", "--json"], home)
+    assert payload["error"] == "bank_not_initialized" and code == 2, payload
+
+    assert _bank_json(["init", "--default", "--json"], home)[1] == 0
+    assert _bank_json(["status", "--json"], home)[0]["state"] == "ready"
+
+    payload, code = _bank_json([*_AIRLINE_FILE, "--json"], home)
+    assert code == 0 and payload["filed"]["id"] == 1, payload
+    assert payload["filed"]["airline"] == "DL", payload
+
+    assert _bank_json(["list", "--json"], home)[0]["count"] == 1
+    assert _bank_json(["pending", "--json"], home)[0]["count"] == 1
+    assert _bank_json(["check", "--airline", "DL", "--json"], home)[0]["count"] == 1
+
+    payload, code = _bank_json(
+        ["resolve", "--id", "1", "--resolution", "RESOLVED", "--note", "75K", "--json"], home)
+    assert code == 0 and payload["updated"]["resolution"] == "RESOLVED", payload
+    assert _bank_json(["pending", "--json"], home)[0]["count"] == 0
+
+
+def test_bank_json_failures_are_structured():
+    home = fresh_home()
+    assert run(BANK, ["init", "--default"], home).returncode == 0
+    cases = [
+        ("invalid_category",
+         [*_AIRLINE_FILE[:-6], "--category", "NOPE", "--severity", "MAJOR",
+          "--summary", "s", "--outcome", "o", "--json"]),
+        ("not_found", ["resolve", "--id", "99", "--resolution", "RESOLVED", "--json"]),
+        ("missing_required_args",
+         ["file", "--passenger", "P", "--category", "DELAY", "--severity", "MAJOR",
+          "--summary", "s", "--outcome", "o", "--json"]),
+        ("missing_required_args", ["check", "--json"]),
+    ]
+    for expected, args in cases:
+        payload, code = _bank_json(args, home)
+        assert code != 0, f"{args} should exit non-zero"
+        assert payload["error"] == expected, f"{args}: wanted {expected}, got {payload}"
+
+
+def test_bank_json_empty_results_are_valid_answers():
+    # A count of 0 is an answer, not a failure — the prose path prints "No complaints found."
+    home = fresh_home()
+    assert run(BANK, ["init", "--default"], home).returncode == 0
+    for args, key in ((["list", "--json"], "count"), (["pending", "--json"], "count")):
+        payload, code = _bank_json(args, home)
+        assert code == 0 and payload[key] == 0, f"{args}: {payload}"
+    payload, code = _bank_json(["check", "--airline", "DL", "--json"], home)
+    assert code == 0 and payload["count"] == 0 and payload["matches"] == [], payload
+
+
+def test_bank_json_hotel_store_is_covered_too():
+    home = fresh_home()
+    assert run(BANK, ["init", "--default"], home).returncode == 0
+    payload, code = _bank_json(["--store", "hotel", *_HOTEL_FILE_ARGS, "--json"], home)
+    assert code == 0, payload
+    assert payload["store"] == "hotel" and payload["filed"]["brand"] == "Hilton", payload
+    assert _bank_json(["--store", "hotel", "list", "--json"], home)[0]["count"] == 1
+    # Airline store stays empty — the two stores never leak into each other.
+    assert _bank_json(["list", "--json"], home)[0]["count"] == 0
+
+
+def test_bank_prose_mode_is_unchanged_by_default():
+    # Back-compat: every existing call site omits --json and must still get the tables.
+    home = fresh_home()
+    assert run(BANK, ["init", "--default"], home).returncode == 0
+    assert run(BANK, _AIRLINE_FILE, home).returncode == 0
+    r = run(BANK, ["list"], home)
+    assert "Resolution" in r.stdout and "DL1234" in r.stdout, r.stdout
+    assert not r.stdout.lstrip().startswith("{"), "prose mode must not emit JSON"
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

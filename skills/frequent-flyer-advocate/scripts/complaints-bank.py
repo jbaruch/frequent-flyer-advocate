@@ -29,6 +29,8 @@ Examples:
 """
 
 import argparse
+import contextlib
+import json
 import os
 import re
 import sys
@@ -49,6 +51,42 @@ VALID_HOTEL_CATEGORIES = [
 ]
 
 VALID_SEVERITIES = ["MINOR", "MODERATE", "MAJOR", "RIGHTS_VIOLATION"]
+
+
+JSON_EMITTED = False
+JSON_MODE = False
+
+
+def emit_json(payload):
+    """Write one JSON object to stdout — the agent-facing output contract.
+
+    Every command's --json mode goes through here so the shape stays uniform: a single
+    object, never a bare array or a stream of lines. Diagnostics stay on stderr, per
+    rules/file-hygiene.md I/O Conventions. Mirrors credits-tracker.py, so both scripts in
+    this skill answer the same way.
+    """
+    global JSON_EMITTED
+    JSON_EMITTED = True
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
+
+
+@contextlib.contextmanager
+def quiet_stdout(active):
+    """Route human progress lines to stderr while a JSON command runs.
+
+    Bootstrap helpers narrate what they did on stdout. In --json mode stdout belongs to the
+    payload, and a progress line ahead of it makes the output unparseable.
+    """
+    if not active:
+        yield
+        return
+    with contextlib.redirect_stdout(sys.stderr):
+        yield
+
+
+def complaint_payload(c):
+    """One complaint as structured data: parser keys, minus internals."""
+    return {k: v for k, v in c.items() if not k.startswith("_")}
 
 
 def store_path(store):
@@ -125,6 +163,11 @@ def require_initialized():
             f"      complaints-bank.py init --path <dir>    # store elsewhere, symlinked back",
             file=sys.stderr,
         )
+    # The diagnostic above is for the human; a --json caller reads this instead. main()'s
+    # SystemExit handler cannot build it, since only here is the reason known.
+    if JSON_MODE:
+        emit_json({"error": "bank_not_initialized", "store": BANK_DIR,
+                   "detail": "run init or link first; diagnostic on stderr"})
     sys.exit(2)
 
 
@@ -280,50 +323,78 @@ def _link(target):
     print(f"   Found existing bank ({filed} filed complaint(s)).")
 
 
-def cmd_status(_args):
+def cmd_status(args):
     """Report bank readiness so the skill's bootstrap doesn't reimplement the contract.
 
     Single source of truth for "is the bank usable?": prints one of `ready` / `missing` /
     `invalid: <reason>` and exits 0 (ready), 3 (missing), or 4 (invalid). Mirrors the
     isdir-based contract that require_initialized() enforces.
     """
-    if os.path.isdir(BANK_DIR):
+    state, reason, code = _resolve_status()
+    if getattr(args, "json", False):
+        emit_json({"state": state, "store": os.path.realpath(BANK_DIR)
+                   if state == "ready" else BANK_DIR, "reason": reason})
+    elif state == "ready":
         # Exact, bare readiness token (machine-readable contract); the resolved path
         # goes to stderr so stdout stays a single stable token, like `missing`.
         print("ready")
         print(f"  store: {os.path.realpath(BANK_DIR)}", file=sys.stderr)
-        sys.exit(0)
+    elif state == "invalid":
+        print(f"invalid: {reason}")
+    else:
+        print("missing")
+    sys.exit(code)
+
+
+def _resolve_status():
+    """Readiness as data: (state, reason, exit_code). One contract, two renderings."""
+    if os.path.isdir(BANK_DIR):
+        return "ready", None, 0
     if os.path.islink(BANK_DIR):
         target = os.readlink(BANK_DIR)
         if not os.path.exists(BANK_DIR):
-            print(f"invalid: dangling symlink -> {target} "
-                  f"(cloud folder unmounted? re-link or remove it)")
-        else:
-            print(f"invalid: symlink -> {target} is not a directory")
-        sys.exit(4)
+            return ("invalid",
+                    f"dangling symlink -> {target} "
+                    f"(cloud folder unmounted? re-link or remove it)", 4)
+        return "invalid", f"symlink -> {target} is not a directory", 4
     if os.path.exists(BANK_DIR):
-        print(f"invalid: {BANK_DIR} exists but is not a directory")
-        sys.exit(4)
-    print("missing")
-    sys.exit(3)
+        return "invalid", f"{BANK_DIR} exists but is not a directory", 4
+    return "missing", None, 3
 
 
 def cmd_link(args):
     """Link to an existing complaint-bank directory (non-interactive)."""
-    _link(args.path)
+    with quiet_stdout(getattr(args, "json", False)):
+        _link(args.path)
+    if getattr(args, "json", False):
+        emit_json({"linked": BANK_DIR, "target": os.path.realpath(BANK_DIR),
+                   "filed": _count_all_complaints(os.path.realpath(BANK_DIR))})
 
 
 def cmd_init(args):
     """Set up storage. Non-interactive with --default/--path; otherwise interactive."""
+    json_mode = getattr(args, "json", False)
     if getattr(args, "default", False):
-        _init_default()
+        with quiet_stdout(json_mode):
+            _init_default()
+        if json_mode:
+            emit_json({"initialized": os.path.realpath(BANK_DIR), "linked_from": BANK_DIR})
         return
     if getattr(args, "path", None) is not None:
         # Dispatch on presence, not truthiness: `init --path ""` must reach _init_custom's
         # self-error-handled diagnostic, not fall through to the interactive branch. argparse
         # leaves args.path as None when --path is absent, so None alone means "go interactive".
-        _init_custom(os.path.expanduser(args.path))
+        with quiet_stdout(json_mode):
+            _init_custom(os.path.expanduser(args.path))
+        if json_mode:
+            emit_json({"initialized": os.path.realpath(BANK_DIR), "linked_from": BANK_DIR})
         return
+
+    if json_mode:
+        # Interactive init prompts on stdin; a JSON caller has no way to answer.
+        emit_json({"error": "interactive_required",
+                   "detail": "pass --default or --path with --json"})
+        sys.exit(1)
 
     # Only a real bank (a directory, or a symlink to one) counts as "already
     # initialized" and is eligible for reinit. An unusable path — dangling symlink,
@@ -498,6 +569,9 @@ def _require_store_args(args, store):
     missing = [n for n in needed if not getattr(args, n, None)]
     if missing:
         flags = ", ".join("--" + n.replace("_", "-") for n in missing)
+        if getattr(args, "json", False):
+            emit_json({"error": "missing_required_args", "store": store,
+                       "missing": ["--" + n.replace("_", "-") for n in missing]})
         print(f"ERROR: `--store {store} file` requires: {flags}", file=sys.stderr)
         sys.exit(1)
 
@@ -509,10 +583,16 @@ def cmd_file(args):
     cat = args.category.upper()
     valid_cats = categories_for(store)
     if cat not in valid_cats:
+        if getattr(args, "json", False):
+            emit_json({"error": "invalid_category", "given": cat, "store": store,
+                       "valid": valid_cats})
         print(f"ERROR: Invalid category '{cat}' for --store {store}. Valid: {', '.join(valid_cats)}", file=sys.stderr)
         sys.exit(1)
     sev = args.severity.upper()
     if sev not in VALID_SEVERITIES:
+        if getattr(args, "json", False):
+            emit_json({"error": "invalid_severity", "given": sev,
+                       "valid": VALID_SEVERITIES})
         print(f"ERROR: Invalid severity '{sev}'. Valid: {', '.join(VALID_SEVERITIES)}", file=sys.stderr)
         sys.exit(1)
 
@@ -549,6 +629,10 @@ def cmd_file(args):
     content = insert_complaint(content, complaint_md)
     write_bank(content, store)
 
+    if getattr(args, "json", False):
+        emit_json({"filed": complaint_payload(complaint), "store": store})
+        return
+
     if store == "hotel":
         print(f"Filed complaint #{cid}: [{cat}] {args.property} {args.stay_dates} ({args.brand})")
     else:
@@ -583,8 +667,12 @@ def _recency_date(c, store):
 
 def cmd_check(args):
     store = args.store
+    json_mode = getattr(args, "json", False)
     if store == "hotel":
         if not args.brand:
+            if json_mode:
+                emit_json({"error": "missing_required_args", "store": store,
+                           "missing": ["--brand"]})
             print("ERROR: `--store hotel check` requires --brand.", file=sys.stderr)
             sys.exit(1)
         primary = args.brand
@@ -593,6 +681,9 @@ def cmd_check(args):
         secondary_val = args.property
     else:
         if not args.airline:
+            if json_mode:
+                emit_json({"error": "missing_required_args", "store": store,
+                           "missing": ["--airline"]})
             print("ERROR: `check` requires --airline.", file=sys.stderr)
             sys.exit(1)
         primary = args.airline.upper()
@@ -603,11 +694,15 @@ def cmd_check(args):
     content = read_bank(store)
     complaints = parse_complaints(content)
 
+    primary_field = "brand" if store == "hotel" else "airline"
     if not complaints:
+        if json_mode:
+            emit_json({"store": store, primary_field: primary, "count": 0, "matches": [],
+                       "category_patterns": {}, "secondary_patterns": {},
+                       "resolutions": {}, "denied_count": 0, "recurring": None})
+            return
         print("No complaints in the bank.")
         return
-
-    primary_field = "brand" if store == "hotel" else "airline"
     matches = [c for c in complaints if c.get(primary_field, "").upper() == primary.upper()]
 
     if args.passenger:
@@ -617,12 +712,22 @@ def cmd_check(args):
         matches = [c for c in matches if c.get(secondary_field, "").upper() == secondary_val.upper()]
 
     if not matches:
+        if json_mode:
+            emit_json({"store": store, primary_field: primary, "count": 0, "matches": [],
+                       "category_patterns": {}, "secondary_patterns": {},
+                       "resolutions": {}, "denied_count": 0, "recurring": None})
+            return
         filters = [f"{primary_field}={primary}"]
         if args.passenger:
             filters.append(f"passenger={args.passenger}")
         if secondary_val:
             filters.append(f"{secondary_flag}={secondary_val}")
         print(f"No prior complaints matching {', '.join(filters)}.")
+        return
+
+    if json_mode:
+        emit_json(_check_payload(matches, store, primary_field, primary,
+                                 secondary_field, secondary_flag))
         return
 
     pax = args.passenger or "all passengers"
@@ -684,6 +789,49 @@ def cmd_check(args):
             print(f"{len(matches)} complaints in {months} month(s) — shows recurring pattern")
 
 
+def _check_payload(matches, store, primary_field, primary, secondary_field, secondary_flag):
+    """The same groupings `check` prints, as data.
+
+    A pattern is a group of 2+ — the threshold the prose rendering already uses, kept in one
+    place so the JSON and the tables can never disagree about what counts as a pattern.
+    """
+    by_cat = {}
+    for c in matches:
+        by_cat.setdefault(c.get("category", "OTHER"), []).append(c)
+
+    by_secondary = {}
+    for c in matches:
+        by_secondary.setdefault(c.get(secondary_field, "?"), []).append(c)
+
+    resolutions = {}
+    for c in matches:
+        r = c.get("resolution", "PENDING")
+        resolutions[r] = resolutions.get(r, 0) + 1
+
+    recurring = None
+    dates = [d for d in (_recency_date(c, store) for c in matches) if d is not None]
+    if len(dates) >= 2:
+        dates.sort()
+        span = (dates[-1] - dates[0]).days
+        if span <= 365:
+            recurring = {"complaints": len(matches), "span_days": span,
+                         "span_months": max(1, span // 30)}
+
+    return {
+        "store": store,
+        primary_field: primary,
+        "count": len(matches),
+        "matches": [complaint_payload(c) for c in matches],
+        "category_patterns": {k: len(v) for k, v in by_cat.items() if len(v) >= 2},
+        "categories": {k: len(v) for k, v in by_cat.items()},
+        "secondary_field": secondary_flag,
+        "secondary_patterns": {k: len(v) for k, v in by_secondary.items() if len(v) >= 2},
+        "resolutions": resolutions,
+        "denied_count": sum(1 for c in matches if c.get("resolution") == "DENIED"),
+        "recurring": recurring,
+    }
+
+
 def cmd_resolve(args):
     store = args.store
     content = read_bank(store)
@@ -696,11 +844,16 @@ def cmd_resolve(args):
             break
 
     if not target:
+        if getattr(args, "json", False):
+            emit_json({"error": "not_found", "id": args.id, "store": store})
         print(f"ERROR: Complaint #{args.id} not found.", file=sys.stderr)
         sys.exit(1)
 
     res = args.resolution.upper()
     if res not in VALID_RESOLUTIONS:
+        if getattr(args, "json", False):
+            emit_json({"error": "invalid_resolution", "given": res,
+                       "valid": VALID_RESOLUTIONS})
         print(f"ERROR: Invalid resolution '{res}'. Valid: {', '.join(VALID_RESOLUTIONS)}", file=sys.stderr)
         sys.exit(1)
 
@@ -723,6 +876,13 @@ def cmd_resolve(args):
             break
 
     write_bank("\n".join(lines), store)
+    if getattr(args, "json", False):
+        updated = dict(target)
+        updated["resolution"] = res
+        if args.note:
+            updated["resolution_note"] = args.note
+        emit_json({"updated": complaint_payload(updated), "store": store})
+        return
     print(f"Updated complaint #{args.id}: resolution = {res}")
     if args.note:
         print(f"  Note: {args.note}")
@@ -746,6 +906,11 @@ def cmd_list(args):
     if args.category:
         complaints = [c for c in complaints if c.get("category", "").upper() == args.category.upper()]
 
+    if getattr(args, "json", False):
+        emit_json({"store": store, "count": len(complaints),
+                   "complaints": [complaint_payload(c) for c in complaints]})
+        return
+
     if not complaints:
         print("No complaints found.")
         return
@@ -767,6 +932,11 @@ def cmd_pending(args):
     content = read_bank(store)
     complaints = parse_complaints(content)
     pending = [c for c in complaints if c.get("resolution", "PENDING") == "PENDING"]
+
+    if getattr(args, "json", False):
+        emit_json({"store": store, "count": len(pending),
+                   "pending": [complaint_payload(c) for c in pending]})
+        return
 
     if not pending:
         print("No pending complaints.")
@@ -795,22 +965,29 @@ if __name__ == "__main__":
     # Defaults to airline so every existing call site is byte-unchanged.
     parser.add_argument("--store", choices=["airline", "hotel"], default="airline",
                         help="Which complaint store to act on (default: airline)")
+
+    # Inherited by every subcommand so `<cmd> --json` works uniformly. Agent callers pass
+    # it; the prose default is the interactive human path, unchanged.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--json", action="store_true",
+                        help="Emit a JSON object on stdout instead of prose")
+
     sub = parser.add_subparsers(dest="command")
 
-    init = sub.add_parser("init", help="Set up complaint bank storage")
+    init = sub.add_parser("init", help="Set up complaint bank storage", parents=[common])
     init_mode = init.add_mutually_exclusive_group()
     init_mode.add_argument("--default", action="store_true", help="Non-interactive: create a fresh bank at ~/.claude/complaint-bank")
     init_mode.add_argument("--path", help="Non-interactive: create a fresh bank at this path, symlinked back to ~/.claude")
 
-    lnk = sub.add_parser("link", help="Link ~/.claude/complaint-bank to an existing bank directory (e.g. cloud-synced)")
+    lnk = sub.add_parser("link", help="Link ~/.claude/complaint-bank to an existing bank directory (e.g. cloud-synced)", parents=[common])
     lnk.add_argument("--path", required=True, help="Path to the existing complaint-bank directory")
 
-    sub.add_parser("status", help="Report bank readiness: ready (0) / missing (3) / invalid (4)")
+    sub.add_parser("status", help="Report bank readiness: ready (0) / missing (3) / invalid (4)", parents=[common])
 
     # `file`: store-specific required args (--airline… vs --brand…) can't be argparse-required
     # because --store is resolved alongside them; cmd_file enforces them per store. The shared
     # args stay argparse-required since both stores need them.
-    fl = sub.add_parser("file", help="File a new complaint")
+    fl = sub.add_parser("file", help="File a new complaint", parents=[common])
     fl.add_argument("--airline", help="[airline] Airline code (e.g. DL, AA, UA)")
     fl.add_argument("--flight", help="[airline] Flight number (e.g. DL1234)")
     fl.add_argument("--flight-date", help="[airline] Date of flight (YYYY-MM-DD)")
@@ -827,39 +1004,64 @@ if __name__ == "__main__":
     fl.add_argument("--summary", required=True, help="1-2 sentence summary of what happened")
     fl.add_argument("--outcome", required=True, help="What was requested in the letter")
 
-    chk = sub.add_parser("check", help="Check for complaint patterns")
+    chk = sub.add_parser("check", help="Check for complaint patterns", parents=[common])
     chk.add_argument("--airline", help="[airline] Airline code (required for --store airline)")
     chk.add_argument("--brand", help="[hotel] Hotel brand (required for --store hotel)")
     chk.add_argument("--passenger", help="Filter by passenger name")
     chk.add_argument("--route", help="[airline] Filter by route")
     chk.add_argument("--property", help="[hotel] Filter by property name")
 
-    res = sub.add_parser("resolve", help="Update complaint resolution")
+    res = sub.add_parser("resolve", help="Update complaint resolution", parents=[common])
     res.add_argument("--id", type=int, required=True, help="Complaint ID")
     res.add_argument("--resolution", required=True, help=f"Resolution: {', '.join(VALID_RESOLUTIONS)}")
     res.add_argument("--note", help="Resolution details")
 
-    sub.add_parser("pending", help="List complaints awaiting resolution")
+    sub.add_parser("pending", help="List complaints awaiting resolution", parents=[common])
 
-    ls = sub.add_parser("list", help="List complaints")
+    ls = sub.add_parser("list", help="List complaints", parents=[common])
     ls.add_argument("--airline", help="[airline] Filter by airline code")
     ls.add_argument("--brand", help="[hotel] Filter by hotel brand")
     ls.add_argument("--property", help="[hotel] Filter by property name (substring)")
     ls.add_argument("--passenger", help="Filter by passenger name")
     ls.add_argument("--category", help="Filter by category (store-appropriate vocab)")
 
-    args = parser.parse_args()
-    if not args.command:
-        parser.print_help()
-        sys.exit(1)
+    # Read before parsing: an argparse failure exits before args exist, and that exit still
+    # has to honour the JSON contract. require_initialized() reads the module-level flag for
+    # the same reason — it fires below the dispatch, where args are not in scope.
+    JSON_MODE = "--json" in sys.argv
+    globals()["JSON_MODE"] = JSON_MODE
 
-    {
-        "init": cmd_init,
-        "link": cmd_link,
-        "status": cmd_status,
-        "file": cmd_file,
-        "check": cmd_check,
-        "resolve": cmd_resolve,
-        "pending": cmd_pending,
-        "list": cmd_list,
-    }[args.command](args)
+    try:
+        args = parser.parse_args()
+        if not args.command:
+            parser.print_help()
+            sys.exit(1)
+
+        {
+            "init": cmd_init,
+            "link": cmd_link,
+            "status": cmd_status,
+            "file": cmd_file,
+            "check": cmd_check,
+            "resolve": cmd_resolve,
+            "pending": cmd_pending,
+            "list": cmd_list,
+        }[args.command](args)
+    except SystemExit as exc:
+        # Any exit that skipped emit_json still owes the caller an object: under --json an
+        # empty stdout is unparseable, which reads as a crashed script rather than a
+        # reported failure. The diagnostic is already on stderr; this only guarantees
+        # stdout holds one object.
+        code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
+        if JSON_MODE and code and not JSON_EMITTED:
+            emit_json({"error": "command_failed", "exit_code": code,
+                       "detail": "diagnostic on stderr"})
+        raise
+    # outer-boundary-process-contract: the caller reads stdout as JSON, so an unexpected
+    # exception surfacing as a traceback with empty stdout is indistinguishable from a
+    # crash. This emits a structured failure and re-raises; letting it propagate bare
+    # would break the stdout contract.
+    except Exception:  # noqa: BLE001
+        if JSON_MODE and not JSON_EMITTED:
+            emit_json({"error": "unexpected_failure", "detail": "traceback on stderr"})
+        raise

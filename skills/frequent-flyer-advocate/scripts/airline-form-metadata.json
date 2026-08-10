@@ -1,0 +1,80 @@
+{
+  "_comment": "Per-airline complaint submission channel metadata, read by letter-fit.py. Only verified facts belong here: every char_limit carries limit_verified + limit_source. Unverified fields are the literal string 'unknown' so letter-fit.py flags them at runtime instead of quietly assuming. To add an airline, copy an existing block and fill in what you have — an entry with char_limit: null is still useful for its channel_notes.",
+  "_version": 1,
+  "_counting_methods": {
+    "codepoints": "Python len() — one character per Unicode codepoint.",
+    "utf8_bytes": "Length of the UTF-8 encoding. Non-ASCII (em-dash, smart quotes) costs 2-3.",
+    "crlf": "Codepoints with every newline expanded to a CRLF pair.",
+    "html_entities": "Codepoints after HTML-escaping the specials a rich-text field would encode.",
+    "unknown": "Not established for this form. letter-fit.py takes the worst of the above and multiplies by an inflation factor — see UNKNOWN_INFLATION_DEFAULT in letter-fit.py."
+  },
+  "airlines": {
+    "AA": {
+      "name": "American Airlines",
+      "channels": {
+        "web_form": {
+          "url": "https://www.aa.com/contact",
+          "char_limit": 1500,
+          "limit_verified": true,
+          "limit_source": "user-reported from the live form, 2026-06-13",
+          "prefilled_fields": [
+            "passenger_name",
+            "loyalty_number",
+            "flight_number",
+            "flight_date",
+            "route"
+          ],
+          "formatting": {
+            "markdown_bold": "unknown",
+            "markdown_headers": "unknown",
+            "markdown_bullets": "unknown",
+            "markdown_blockquotes": "unknown",
+            "markdown_links": "unknown",
+            "line_breaks": true,
+            "unicode_bullets": true
+          },
+          "counting_method": "unknown"
+        },
+        "executive_office_mail": {
+          "address": "Customer Relations — Executive Office\nAmerican Airlines\nP.O. Box 619612, MD 2400\nDFW Airport, TX 75261-9612",
+          "char_limit": null,
+          "formatting": {
+            "markdown_bold": false,
+            "markdown_headers": false,
+            "markdown_bullets": false,
+            "markdown_blockquotes": false,
+            "markdown_links": false,
+            "line_breaks": true,
+            "unicode_bullets": true
+          }
+        }
+      },
+      "channel_notes": "Executive customer-relations email reported routing to unmonitored mailboxes since January 2026. Web form is primary for initial filing; paper mail to the executive office for escalation."
+    },
+    "WN": {
+      "name": "Southwest Airlines",
+      "channels": {
+        "web_form": {
+          "url": "https://www.southwest.com/contact-us",
+          "char_limit": 2500,
+          "limit_verified": true,
+          "limit_source": "user-reported from the live form, 2026-06-13",
+          "prefilled_fields": "unknown",
+          "formatting": {
+            "markdown_bold": "unknown",
+            "markdown_headers": "unknown",
+            "markdown_bullets": "unknown",
+            "markdown_blockquotes": "unknown",
+            "markdown_links": "unknown",
+            "line_breaks": true,
+            "unicode_bullets": true
+          },
+          "counting_method": "unknown",
+          "observed_inflation": 1.14,
+          "observed_inflation_source": "2026-06-13: the live form's counter read 2798 for a letter whose Python len() was 2472 (ratio 1.132, rounded up). No standard encoding reproduces the form's number — UTF-8 bytes 2482, CRLF 2495, HTML entities 2500 — so the factor stands in for an unidentified counting method."
+        }
+      },
+      "channel_notes": "The form's counter runs materially higher than any plain encoding of the same text. Treat 2500 as a budget to stay well under, not to fill."
+    }
+  }
+}

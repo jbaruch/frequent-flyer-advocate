@@ -1,8 +1,8 @@
 ---
 alwaysApply: false
+applyTo: "skills/frequent-flyer-advocate/** — when prior complaints exist for the same airline and the skill is deciding whether to reference them"
 description: >
-  Constraints on referencing complaint history in letters. Use when prior complaints
-  exist for the same airline and the skill is deciding whether to reference them.
+  Constraints on referencing complaint history in letters.
 ---
 
 # Complaint Pattern Usage

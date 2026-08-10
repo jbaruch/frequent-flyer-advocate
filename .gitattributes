@@ -1,0 +1,8 @@
+# Generated artifacts committed under the file-hygiene "platform-required generated files"
+# exception. That exception requires the generated form to be marked here, so diffs stay
+# readable and merges do not conflict on machine-written content.
+
+# Hash-pinned dependency lock for the CI gate. Written by
+# .github/scripts/lock-requirements.py — never hand-edited, so a merge takes our side and
+# the lock is regenerated rather than reconciled line by line.
+.github/requirements.txt linguist-generated=true merge=ours

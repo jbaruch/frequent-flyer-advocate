@@ -1,8 +1,8 @@
 ---
 alwaysApply: false
+applyTo: "skills/frequent-flyer-advocate/** — when producing escalation guidance, escalation plans, or post-letter next-steps documents"
 description: >
-  Output requirements for escalation guides and plans. Use when producing escalation
-  guidance, escalation plans, or post-letter next-steps documents.
+  Output requirements for escalation guides and plans.
 ---
 
 # Escalation Document Requirements

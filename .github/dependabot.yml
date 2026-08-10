@@ -11,3 +11,12 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "chore(ci)"
+  # The CI gate's pyright pin lives in .github/requirements.txt rather than baked
+  # into pre-publish-gate.sh, so this ecosystem gives it the same scanner-backed
+  # renewal the action refs get.
+  - package-ecosystem: "pip"
+    directory: "/.github"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(ci)"
