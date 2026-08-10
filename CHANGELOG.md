@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.9.26 — 2026-08-09
+
+### Added
+
+- `scripts/letter-fit.py` + `scripts/airline-form-metadata.json`: the skill now measures a form-mode letter against the airline's actual submission-form limit instead of trusting its own arithmetic. Resolves #4 (channel awareness) and #5 (the script that makes the metadata operational) together — the metadata without the script is documentation, and the script without the intake questions has nothing to measure against.
+  - The failure that prompted both issues: a Southwest draft measured 2472 by Python `len()`, was declared under the 2500-char form limit, and the live form's counter came back **2798**. No encoding of that text reproduces 2798 — UTF-8 bytes 2482, CRLF 2495, HTML entities 2500 — so the form counts by a method nobody has identified.
+  - `letter-fit.py` counts under all four encodings. When the channel's `counting_method` names one, that count is authoritative. When it is `unknown`, the worst count is multiplied by an inflation factor and the verdict is labeled unverified. WN carries `observed_inflation: 1.14`, derived from that 2798/2472 ratio; `UNKNOWN_INFLATION_DEFAULT = 1.15` covers forms nobody has measured. Replayed against the original draft the script judges it at 2820 vs the form's 2798 and exits 1 — the draft that shipped would have been stopped.
+  - Formatting warnings flag markdown bold, headings, bullets, blockquotes, links, and unicode bullets against the channel's `formatting` map. Only an explicit `true` stays silent; a `false` or `"unknown"` entry warns, so an unrecorded field is a reason to check rather than permission to assume.
+  - Exit codes: 0 fits, 1 overflows, 2 argument or metadata error. `--limit N` measures an airline the metadata does not record; `--info` and `--list-airlines` need no letter; `--json` emits the report for the skill to act on; `--metadata` points at another copy of the data file.
+  - Seed metadata covers AA (1500-char web form, five prefilled fields, executive-office paper address) and WN (2500-char web form). Both limits carry `limit_verified` + `limit_source`; nothing is recorded that was not observed.
+- `tests/test_letter_fit.py`: 33 outcome-focused cases covering counting, the inflation margin, the `--limit` override, formatting detection, input handling, error paths, and a provenance check over the shipped metadata. The reported Southwest draft is pinned as a regression test. Deterministic — fixed inputs, no clock, no network.
+
+### Changed
+
+- `SKILL.md` Phase 1 asks for the submission channel alongside the other always-gather items, and for a web form follows up on the character limit and the fields the form captures itself. Asking after a draft exists is what forced the two compression passes in the June 2026 AA case: one to strip data the form already had, one to fit 1500 chars from ~5500.
+- `SKILL.md` Phase 4 adds the form-fit variant and makes `letter-fit.py` a gate — an overflowing draft is never presented, and the user sees the script's output rather than the agent's count.
+- `SKILL.md` Phase 5 reads recorded channel reliability from the metadata before recommending where to send. AA's executive customer-relations email is recorded as routing to unmonitored mailboxes since January 2026; the guidance is web form first, paper mail to the executive office for escalation.
+- `rules/letter-quality.md` splits into per-mode sections. The form's own fields may cover passenger name, loyalty number, flight number, date, route, and gates; loyalty **tier** in the opening sentence, the FlightAware timestamp, the verbatim quote, and the 14–21 day deadline all survive compression. Counting a form-mode letter by hand is now forbidden outright.
+
+### Notes
+
+- Both scripts are FFA-only — no mirror exists in `jbaruch/jbaruch-travel-policy`, so no byte-identical-sync ceremony applies.
+- `counting_method` stays `"unknown"` for AA and WN. Resolving it needs someone to paste a known-length string into each live form and read the counter back; the inflation margin is the stand-in until then. A verified method makes the margin disappear on its own — the script uses the named counter and drops the multiplier.
+- Out of scope (follow-up): #10, wiring the tracker and letter-fit suites into CI. The reusable publish workflow already takes `pre-publish-script` + `python-version` inputs for exactly this; it is a CI change and gets its own PR.
+
 ## 0.9.13 — 2026-06-22
 
 ### Added
