@@ -27,7 +27,7 @@ Three sections, in this order:
 ## Compensation History (Deposited)
 ```
 
-`use` moves a record from the first to the second. Records are never deleted — the archive is read as prior-compensation history by `frequent-flyer-advocate` during intake, and by `complaint-patterns` for establishing repeat-failure patterns.
+`use` moves a record from the first to the second. Records are never deleted — spent instruments stay in the archive as evidence of what an airline has already paid out, which is what `complaint-patterns` needs for a repeat-failure claim.
 
 **Compensation History** holds instruments with no lifecycle: miles and points a program deposited at the moment of the grant. They are events, not inventory — never in `list`, `expiring`, `check`, or the monetary total, and with no `use` transition, because there is nothing to transition to. `history` reads them.
 
@@ -63,10 +63,12 @@ The heading and `Schema version` are always written. Every other field is writte
 | Skill | Role | Operations |
 |---|---|---|
 | `using-travel-credits` | owner, writer, reader | `status`, `link`, `init`, `migrate`, `list`, `expiring`, `check`, `history`, `add`, `use` |
-| `frequent-flyer-advocate` | writer, reader | logs granted compensation; reads the archive for prior-compensation history |
+| `frequent-flyer-advocate` | writer, caller | writes granted compensation with a direct `add`; reads Active and Compensation History through this skill's list and history actions, never directly |
 | `jbaruch/jbaruch-travel-policy` | caller | reaches every operation through this skill; ships no tracker of its own since its 0.7.43 |
 
 `migrate` is the owner's alone. No other skill in this table may run it, and no other write path performs one.
+
+Reads go through this skill. A direct `parse_credits()` read by a non-owner skips every record not at `SCHEMA_VERSION` and reports an empty view, which is indistinguishable from an empty store — so a caller that acts on a count must reach it through the owner, which migrates first and gates on `unconsumable`. `frequent-flyer-advocate` keeps a direct `add` because writing a new record parses nothing.
 
 Every writer promises: writes go through `credits-tracker.py`, never a hand edit. Readers promise: absent fields are absent, not empty — a missing `Expiry` means no expiry, never an expired credit.
 

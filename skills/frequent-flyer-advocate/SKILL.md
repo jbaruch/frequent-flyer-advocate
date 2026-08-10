@@ -171,24 +171,24 @@ missing or self-contradictory and its answer changes the letter.
 
 ## Step 4 — Check Prior Compensation History
 
-Once you know the passenger name and airline, invoke `Skill(skill: "using-travel-credits")`
-and run **both** its list action and its compensation-history action, filtered to that
-passenger and airline.
+Once you know the passenger name and airline, make two separate invocations, filtered to that
+passenger and airline:
 
-Do not read the store with a direct `credits-tracker.py` call here. That skill owns the record
-shape and migrates the store before it reads. A direct read is a non-owner read: records the
-store has not yet been migrated to the current shape are skipped, so it returns `count: 0` — and
-`0` at this step is recorded as evidence that the airline has never compensated this passenger.
-A wrong answer, indistinguishable from the true one, in the step whose whole job is finding
-leverage.
+1. Invoke `Skill(skill: "using-travel-credits")` and run its **list** action — instruments the
+   passenger still holds.
+2. Invoke `Skill(skill: "using-travel-credits")` again and run its **compensation-history**
+   action — miles and points the airline already granted for past failures. These never appear
+   in the list.
 
-The list action reports instruments the passenger still holds. The history action reports miles
-and points the airline already granted for past failures; those never appear in the list. Both
-reads are required — the list alone is not a prior-compensation check.
+Both are required. The list alone is not a prior-compensation check.
 
-A count of 0 from either is a valid answer once it came through the owner skill. Note both
-results in your research documentation. If either is non-empty, use it as escalation leverage.
-If the skill reports the store missing or unreadable, note that and continue.
+Never read the store with a direct `credits-tracker.py` call here. A direct read skips records
+not yet migrated to the current shape and reports zero, and a zero from this step is recorded as
+evidence of no prior compensation. Reaching the store through the owner skill is what makes a
+zero mean zero.
+
+Note both results in your research documentation. If either is non-empty, use it as escalation
+leverage. If the skill reports the store missing or unreadable, note that and continue.
 
 Proceed immediately to Step 5.
 
