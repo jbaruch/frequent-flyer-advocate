@@ -193,15 +193,11 @@ python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-adv
 Deposited compensation: miles and points an airline or hotel granted for a
 service failure. Narrow with `--airline`, `--brand`, or `--passenger`.
 
-These are events, not inventory. The balance landed in the loyalty account when
-it was granted, and once there it is fungible with the rest — the loyalty
-program owns that number and this store cannot shadow it. So a deposit never
-appears in Steps 4-6, never counts toward available value, and has no used
-state.
+Report the `deposits` entries with their issuer, date, and amount. Present them
+as history — prior compensation already received, not credits on hand. They do
+not appear in Steps 4-6 and have no used state; `state-schema.md` Versioning
+covers why.
 
-What it is for: prior-compensation context during a complaint intake, and the
-record that lets a repeat-failure claim be stated as fact rather than
-impression. Report the `deposits` entries with their issuer, date, and amount.
 Finish here.
 
 ## Step 8 — Add a Credit

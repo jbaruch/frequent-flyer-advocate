@@ -1422,6 +1422,35 @@ def test_migration_relocates_a_deposit_logged_under_any_type():
     assert _json_out(run(CREDITS, ["list", "--json"], home))["count"] == 1, "only the cert stays"
 
 
+def test_migration_leaves_a_newer_miles_record_where_it_is():
+    """A record this reader cannot read must not be relocated — a move is a rewrite.
+
+    Stamping already leaves a newer record alone. Relocation ran over every active
+    record afterwards, so a version-99 miles row would have been moved and retyped by
+    a reader with no idea what shape it is in.
+    """
+    home = _mktemp("deposits-newer-")
+    store = os.path.join(home, ".claude", "travel-credits")
+    os.makedirs(store)
+    with open(os.path.join(store, "inventory.md"), "w") as fh:
+        fh.write(_V1_STORE_WITH_DEPOSITS.replace(
+            "### #1 — [COMP] 25,000 SkyMiles goodwill (Case 18758214)\n"
+            "- **Schema version**: 1",
+            "### #1 — [COMP] 25,000 SkyMiles goodwill (Case 18758214)\n"
+            "- **Schema version**: 99"))
+
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+    assert payload["skipped_newer"] == 1, payload
+    assert 1 not in [m["id"] for m in payload["deposits_relocated"]], \
+        f"a newer record must not be relocated: {payload}"
+
+    with open(os.path.join(store, "inventory.md")) as fh:
+        after = fh.read()
+    active = after.split("<!-- CREDITS_START")[1].split("<!-- CREDITS_END")[0]
+    assert "### #1 — [COMP]" in active, f"it must stay put, untyped and unmoved:\n{active}"
+    assert "- **Schema version**: 99" in active, "and keep its own version"
+
+
 def test_migration_leaves_a_genuine_companion_certificate_in_place():
     """Classification reads the Value field's unit, not the description's prose."""
     home = _v1_store_home("deposits-keep-")

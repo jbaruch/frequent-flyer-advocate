@@ -828,6 +828,25 @@ def replace_section_block(content, section, new_block):
     return content[:block_start] + new_block + content[end_idx:]
 
 
+def record_version(body_lines):
+    """The record's stamped version, or None when absent or unparseable.
+
+    Reads the last occurrence, matching parse_credits(), which overwrites per field
+    line and so ends up holding that one.
+    """
+    found = None
+    for line in body_lines:
+        stripped = line.strip()
+        if stripped.startswith(VERSION_LINE_PREFIX):
+            found = stripped[len(VERSION_LINE_PREFIX):].strip()
+    if found is None:
+        return None
+    try:
+        return int(found)
+    except ValueError:
+        return None
+
+
 def deposit_unit(body_lines):
     """MILES / POINTS if this record's Value names one, else None.
 
@@ -867,11 +886,18 @@ def relocate_deposits(content):
     kept, moving, moved = [], [], []
     for heading, body in records:
         match = re.match(r"(\s*### #(\d+)\s*[—–-]\s*)\[([A-Z]+)\](.*)", heading)
+        # Only records this reader successfully brought to SCHEMA_VERSION. Stamping
+        # leaves a newer or unparseable record alone, and relocating one here would
+        # rewrite a record the reader cannot read — Migration Policy keeps those as
+        # untouched no-usable-prior-state, and a move is a rewrite.
+        if match is None or record_version(body) != SCHEMA_VERSION:
+            kept.append((heading, body))
+            continue
         # Classified by Value, whatever type the record currently carries. Keying on
         # COMP alone would have stranded every deposit logged under another type —
         # and the skill's only worked example was `--type VOUCHER`, so those exist.
-        unit = deposit_unit(body) if match else None
-        if match is None or unit is None or match.group(3) in DEPOSIT_TYPES:
+        unit = deposit_unit(body)
+        if unit is None or match.group(3) in DEPOSIT_TYPES:
             kept.append((heading, body))
             continue
         moved.append({"id": int(match.group(2)),
