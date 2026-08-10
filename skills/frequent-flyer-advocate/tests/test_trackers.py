@@ -40,6 +40,28 @@ SCRIPTS = os.path.normpath(os.path.join(HERE, "..", "scripts"))
 CREDITS = os.path.join(SCRIPTS, "credits-tracker.py")
 BANK = os.path.join(SCRIPTS, "complaints-bank.py")
 
+
+def _load_tracker():
+    """Import credits-tracker.py by path — its filename has a hyphen."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("credits_tracker", CREDITS)
+    assert spec is not None and spec.loader is not None, f"cannot load {CREDITS}"
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# Read the version the script actually ships rather than hardcoding it. A suite that
+# pins a literal has to be rewritten on every bump, which is how a migration lands
+# with its own tests asserting the version it replaced.
+CURRENT_SCHEMA = _load_tracker().SCHEMA_VERSION
+PRIOR_SCHEMA = CURRENT_SCHEMA - 1
+
+
+def vline(version):
+    return f"- **Schema version**: {version}"
+
+
 # (script, store dir under ~/.claude, a read-only command that triggers require_initialized)
 STORES = [
     (CREDITS, "travel-credits", ["summary"]),
@@ -872,7 +894,7 @@ def test_added_credit_carries_schema_version():
     inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
     with open(inventory) as fh:
         text = fh.read()
-    assert "- **Schema version**: 1" in text, f"no schema version stamped:\n{text}"
+    assert vline(CURRENT_SCHEMA) in text, f"no schema version stamped:\n{text}"
 
 
 def _strip_versions(inventory):
@@ -906,7 +928,7 @@ def test_a_non_owner_write_does_not_migrate_other_records():
                          "--value", "25.00", "--airline", "AA"], home).returncode == 0
     with open(inventory) as fh:
         after = fh.read()
-    assert after.count("- **Schema version**: 1") == 1, (
+    assert after.count(vline(CURRENT_SCHEMA)) == 1, (
         f"a non-owner write must stamp only its own record:\n{after}")
     assert "Legacy credit" in after, "the untouched record must survive verbatim"
 
@@ -930,7 +952,7 @@ def test_migrate_stamps_records_written_before_versioning():
 
     with open(inventory) as fh:
         after = fh.read()
-    assert after.count("- **Schema version**: 1") == 2, f"not stamped:\n{after}"
+    assert after.count(vline(CURRENT_SCHEMA)) == 2, f"not stamped:\n{after}"
     assert "Legacy one" in after and "Legacy two" in after
 
 
@@ -990,7 +1012,7 @@ def test_newer_schema_version_is_skipped_and_its_id_reserved():
     with open(inventory) as fh:
         text = fh.read()
     # Simulate a record written by a future owner.
-    text = text.replace("- **Schema version**: 1", "- **Schema version**: 99")
+    text = text.replace(vline(CURRENT_SCHEMA), vline(99))
     with open(inventory, "w") as fh:
         fh.write(text)
 
@@ -1021,7 +1043,7 @@ def test_a_non_owner_read_declines_an_older_record():
     with open(inventory) as fh:
         text = fh.read()
     with open(inventory, "w") as fh:
-        fh.write(text.replace("- **Schema version**: 1", "- **Schema version**: 0"))
+        fh.write(text.replace(vline(CURRENT_SCHEMA), vline(PRIOR_SCHEMA)))
 
     listed = run(CREDITS, ["list", "--json"], home)
     assert _json_out(listed)["count"] == 0, "an older record must not be consumed"
@@ -1034,7 +1056,7 @@ def test_a_non_owner_read_declines_an_older_record():
 
     with open(inventory) as fh:
         after = fh.read()
-    assert "- **Schema version**: 0" not in after, f"stale version survived:\n{after}"
+    assert vline(PRIOR_SCHEMA) not in after, f"stale version survived:\n{after}"
     assert _json_out(run(CREDITS, ["list", "--json"], home))["count"] == 1, \
         "the record must be readable once the owner has upgraded it"
 
@@ -1054,7 +1076,7 @@ def test_migrate_does_not_rewrite_a_version_line_over_spacing():
     inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
     with open(inventory) as fh:
         text = fh.read()
-    spaced = text.replace("- **Schema version**: 1", "- **Schema version**:  1")
+    spaced = text.replace(vline(CURRENT_SCHEMA), f"- **Schema version**:  {CURRENT_SCHEMA}")
     with open(inventory, "w") as fh:
         fh.write(spaced)
 
@@ -1084,7 +1106,7 @@ def test_migrate_sees_an_indented_version_line_the_way_the_parser_does():
     with open(inventory) as fh:
         text = fh.read()
     with open(inventory, "w") as fh:
-        fh.write(text.replace("- **Schema version**: 1", "  - **Schema version**: 99"))
+        fh.write(text.replace(vline(CURRENT_SCHEMA), "  - **Schema version**: 99"))
 
     payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
     assert payload["skipped_newer"] == 1, f"indented newer record not recognized: {payload}"
@@ -1112,7 +1134,7 @@ def test_migrate_reports_unconsumable_from_the_parser_not_the_buckets():
     with open(inventory) as fh:
         text = fh.read()
     with open(inventory, "w") as fh:
-        fh.write(text.replace("- **Schema version**: 1", "- **Schema version**: 99", 1))
+        fh.write(text.replace(vline(CURRENT_SCHEMA), vline(99), 1))
 
     payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
     assert payload["unconsumable"] == 1, payload
@@ -1178,8 +1200,8 @@ def test_migrate_collapses_duplicate_version_fields():
     with open(inventory) as fh:
         text = fh.read()
     with open(inventory, "w") as fh:
-        fh.write(text.replace("- **Schema version**: 1",
-                              "- **Schema version**: 1\n- **Schema version**: 1"))
+        fh.write(text.replace(vline(CURRENT_SCHEMA),
+                              vline(CURRENT_SCHEMA) + "\n" + vline(CURRENT_SCHEMA)))
 
     payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
     assert payload["changed"] is True, payload
@@ -1188,16 +1210,6 @@ def test_migrate_collapses_duplicate_version_fields():
         after = fh.read()
     assert after.count("**Schema version**") == 1, f"duplicates survived:\n{after}"
     assert _json_out(run(CREDITS, ["list", "--json"], home))["count"] == 1
-
-
-def _load_tracker():
-    """Import credits-tracker.py by path — its filename has a hyphen."""
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("credits_tracker", CREDITS)
-    assert spec is not None and spec.loader is not None, f"cannot load {CREDITS}"
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def test_upgrade_record_body_return_value_is_applied():
@@ -1241,7 +1253,7 @@ def test_migrate_reports_an_unparseable_version_line():
     with open(inventory) as fh:
         text = fh.read()
     with open(inventory, "w") as fh:
-        fh.write(text.replace("- **Schema version**: 1", "- **Schema version**: v1-ish"))
+        fh.write(text.replace(vline(CURRENT_SCHEMA), "- **Schema version**: v1-ish"))
 
     payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
     assert payload["unreadable"] == 1, payload
@@ -1264,20 +1276,298 @@ def test_migrate_does_not_rewrite_a_newer_record_down():
     with open(inventory) as fh:
         text = fh.read()
     with open(inventory, "w") as fh:
-        fh.write(text.replace("- **Schema version**: 1", "- **Schema version**: 99"))
+        fh.write(text.replace(vline(CURRENT_SCHEMA), vline(99)))
 
     payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
     assert payload["skipped_newer"] == 1, payload
 
     with open(inventory) as fh:
         after = fh.read()
-    assert "- **Schema version**: 99" in after, f"newer record was downgraded:\n{after}"
+    assert vline(99) in after, f"newer record was downgraded:\n{after}"
 
     # And a plain non-owner write leaves it alone too.
     run(CREDITS, ["add", "--type", "VOUCHER", "--desc", "Current credit",
                   "--value", "5.00", "--airline", "AA"], home)
     with open(inventory) as fh:
-        assert "- **Schema version**: 99" in fh.read()
+        assert vline(99) in fh.read()
+
+
+# ── compensation deposits: history, not inventory ─────────────────────────────
+
+_V1_STORE_WITH_DEPOSITS = """# Flight Credits, Vouchers & Upgrade Certificates Inventory
+
+## Active Credits
+
+<!-- CREDITS_START — do not edit this marker -->
+
+### #1 — [COMP] 25,000 SkyMiles goodwill (Case 18758214)
+- **Schema version**: 1
+- **Value**: 25000 miles
+- **Airline**: DL
+- **Confirmation**: Case 18758214
+- **Added**: 2026-03-01
+- **Unknown field**: preserve me
+
+### #2 — [COMP] Delta Reserve companion cert 2026
+- **Schema version**: 1
+- **Value**: 1 certificate
+- **Expiry**: 2024-01-31
+- **Airline**: DL
+- **Added**: 2026-01-15
+
+### #3 — [COMP] 30,000 Hilton Honors points goodwill
+- **Schema version**: 1
+- **Value**: 30,000 Hilton Honors points
+- **Brand**: HILTON
+- **Added**: 2026-05-02
+
+### #4 — [ECREDIT] Canceled BNA-JFK
+- **Schema version**: 1
+- **Value**: 347.20
+- **Expiry**: 2024-12-15
+- **Airline**: DL
+- **Added**: 2026-02-01
+<!-- CREDITS_END — do not edit this marker -->
+
+## Used/Expired Credits (Archive)
+
+<!-- ARCHIVE_START — do not edit this marker -->
+<!-- ARCHIVE_END — do not edit this marker -->
+"""
+
+
+def _v1_store_home(prefix):
+    """A pre-v2 store with two miles/points grants mistyped COMP, plus a real cert."""
+    home = _mktemp(prefix)
+    store = os.path.join(home, ".claude", "travel-credits")
+    os.makedirs(store)
+    with open(os.path.join(store, "inventory.md"), "w") as fh:
+        fh.write(_V1_STORE_WITH_DEPOSITS)
+    return home
+
+
+def test_migration_moves_miles_and_points_grants_out_of_inventory():
+    """Deposits have no held-then-applied lifecycle, so they are not inventory.
+
+    An airline granting 25,000 miles deposits them on the spot. Sitting in Active
+    they were counted as available forever, and `use` was the only exit — asserting
+    an application event that never happened.
+    """
+    home = _v1_store_home("deposits-migrate-")
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+
+    moved = {m["id"]: m["to_type"] for m in payload["deposits_relocated"]}
+    assert moved == {1: "MILES", 3: "POINTS"}, payload
+    assert payload["unconsumable"] == 0, payload
+
+    listed = _json_out(run(CREDITS, ["list", "--json"], home))
+    assert [c["id"] for c in listed["credits"]] == [2, 4], \
+        f"deposits must leave the available set: {listed}"
+
+    history = _json_out(run(CREDITS, ["history", "--json"], home))
+    assert [d["id"] for d in history["deposits"]] == [1, 3], history
+
+
+def test_deposit_classification_covers_the_value_shapes_the_store_uses():
+    """Every unit shape seen in the live store, and the non-deposits it must not touch.
+
+    An earlier pattern allowed at most one word between the amount and the unit, so
+    "30,000 Hilton Honors points" — taken straight from the store — stayed in Active.
+    The first fixture happened to use the one-word variant and passed anyway, which is
+    a test written against the implementation rather than the requirement.
+    """
+    tracker = _load_tracker()
+    deposits = {
+        "25000 miles": "MILES",
+        "30,000 Honors points": "POINTS",
+        "30,000 Hilton Honors points": "POINTS",
+        "8,000 SkyMiles": "MILES",
+        "25,000 American AAdvantage miles": "MILES",
+        "5,000 AAdvantage miles": "MILES",
+    }
+    for value, unit in deposits.items():
+        got = tracker.deposit_unit([f"- **Value**: {value}"])
+        assert got == unit, f"{value!r} classified {got!r}, expected {unit!r}"
+
+    # A false positive moves a genuine credit out of the available set, so these matter
+    # more than the misses: none of them may classify as a deposit. The last two are why
+    # the pattern is anchored at both ends — unanchored, each contained a unit and matched.
+    for value in ["1 certificate", "347.20", "$200.00", "2 nights", "1 upgrade certificate",
+                  "5000 miles voucher", "1 certificate for 5000 miles travel"]:
+        got = tracker.deposit_unit([f"- **Value**: {value}"])
+        assert got is None, f"{value!r} must not be treated as a deposit, got {got!r}"
+
+
+def test_migration_relocates_a_deposit_logged_under_any_type():
+    """Classification is by Value, not by the type the record happens to carry.
+
+    Keying on COMP alone stranded every deposit logged under another type — and the
+    skill's only worked example was `--type VOUCHER`, so those records exist.
+    """
+    home = _mktemp("deposits-anytype-")
+    store = os.path.join(home, ".claude", "travel-credits")
+    os.makedirs(store)
+    with open(os.path.join(store, "inventory.md"), "w") as fh:
+        fh.write(_V1_STORE_WITH_DEPOSITS.replace(
+            "### #4 — [ECREDIT] Canceled BNA-JFK\n"
+            "- **Schema version**: 1\n"
+            "- **Value**: 347.20",
+            "### #4 — [VOUCHER] 12,000 SkyMiles goodwill\n"
+            "- **Schema version**: 1\n"
+            "- **Value**: 12,000 SkyMiles"))
+
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+    moved = {m["id"]: (m["from_type"], m["to_type"]) for m in payload["deposits_relocated"]}
+    assert moved.get(4) == ("VOUCHER", "MILES"), f"a VOUCHER-typed deposit must move: {payload}"
+    assert _json_out(run(CREDITS, ["list", "--json"], home))["count"] == 1, "only the cert stays"
+
+
+def test_migration_leaves_a_newer_miles_record_where_it_is():
+    """A record this reader cannot read must not be relocated — a move is a rewrite.
+
+    Stamping already leaves a newer record alone. Relocation ran over every active
+    record afterwards, so a version-99 miles row would have been moved and retyped by
+    a reader with no idea what shape it is in.
+    """
+    home = _mktemp("deposits-newer-")
+    store = os.path.join(home, ".claude", "travel-credits")
+    os.makedirs(store)
+    with open(os.path.join(store, "inventory.md"), "w") as fh:
+        fh.write(_V1_STORE_WITH_DEPOSITS.replace(
+            "### #1 — [COMP] 25,000 SkyMiles goodwill (Case 18758214)\n"
+            "- **Schema version**: 1",
+            "### #1 — [COMP] 25,000 SkyMiles goodwill (Case 18758214)\n"
+            "- **Schema version**: 99"))
+
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+    assert payload["skipped_newer"] == 1, payload
+    assert 1 not in [m["id"] for m in payload["deposits_relocated"]], \
+        f"a newer record must not be relocated: {payload}"
+
+    with open(os.path.join(store, "inventory.md")) as fh:
+        after = fh.read()
+    active = after.split("<!-- CREDITS_START")[1].split("<!-- CREDITS_END")[0]
+    assert "### #1 — [COMP]" in active, f"it must stay put, untyped and unmoved:\n{active}"
+    assert "- **Schema version**: 99" in active, "and keep its own version"
+
+
+def test_migration_leaves_a_genuine_companion_certificate_in_place():
+    """Classification reads the Value field's unit, not the description's prose."""
+    home = _v1_store_home("deposits-keep-")
+    run(CREDITS, ["migrate", "--json"], home)
+
+    listed = _json_out(run(CREDITS, ["list", "--json"], home))
+    cert = [c for c in listed["credits"] if c["id"] == 2]
+    assert cert and cert[0]["type"] == "COMP", f"a real companion cert must stay: {listed}"
+
+
+def test_migration_preserves_fields_the_formatter_does_not_know():
+    """A relocated record moves verbatim apart from its type token."""
+    home = _v1_store_home("deposits-preserve-")
+    run(CREDITS, ["migrate", "--json"], home)
+
+    with open(os.path.join(home, ".claude", "travel-credits", "inventory.md")) as fh:
+        after = fh.read()
+    assert "- **Unknown field**: preserve me" in after, f"field dropped:\n{after}"
+    assert "Case 18758214" in after
+
+
+def test_deposits_are_excluded_from_matching_expiry_and_the_total():
+    """Never available inventory: not matched, not a deadline, not money on hand."""
+    home = _v1_store_home("deposits-excluded-")
+    run(CREDITS, ["migrate", "--json"], home)
+
+    checked = _json_out(run(CREDITS, ["check", "--json", "--scenario",
+                                      "round-trip domestic DL"], home))
+    assert 1 not in [m["id"] for m in checked["matches"]], \
+        f"a miles deposit must not be offered as bookable: {checked}"
+
+    expiring = _json_out(run(CREDITS, ["expiring", "--json"], home))
+    assert 1 not in [e["id"] for e in expiring["expiring"]], expiring
+    assert 1 not in [e["id"] for e in expiring["no_expiry"]], \
+        "a deposit is not an undated credit — it is not a credit"
+
+    summary = _json_out(run(CREDITS, ["summary", "--json"], home))
+    assert summary["total_monetary_value"] == 347.20, \
+        f"deposits must not count as available value: {summary}"
+
+
+def test_a_deposit_has_no_use_transition():
+    """`use` on a deposit asserts an event that never happened — refuse it."""
+    home = _v1_store_home("deposits-nouse-")
+    run(CREDITS, ["migrate", "--json"], home)
+
+    r = run(CREDITS, ["use", "--json", "--id", "1", "--note", "spent them"], home)
+    assert r.returncode != 0, r.stdout
+    assert _json_out(r)["error"] == "deposit_has_no_use_transition", r.stdout
+
+    history = _json_out(run(CREDITS, ["history", "--json"], home))
+    assert [d["id"] for d in history["deposits"]] == [1, 3], "the record must survive intact"
+
+
+def test_adding_a_deposit_writes_to_history_not_inventory():
+    home = _mktemp("deposits-add-")
+    run(CREDITS, ["init", "--default"], home)
+    assert run(CREDITS, ["add", "--json", "--type", "MILES", "--desc", "8,000 SkyMiles goodwill",
+                         "--value", "8000 miles", "--airline", "DL"], home).returncode == 0
+
+    assert _json_out(run(CREDITS, ["list", "--json"], home))["count"] == 0
+    assert _json_out(run(CREDITS, ["history", "--json"], home))["count"] == 1
+
+
+def test_a_deposit_rejects_an_expiry():
+    """A deposit is in the account already; a deadline here would be unenforceable."""
+    home = _mktemp("deposits-expiry-")
+    run(CREDITS, ["init", "--default"], home)
+    r = run(CREDITS, ["add", "--json", "--type", "POINTS", "--desc", "Goodwill points",
+                      "--value", "5000 points", "--expiry", "2024-01-01"], home)
+    assert r.returncode != 0
+    assert _json_out(r)["error"] == "expiry_not_valid_for_deposit", r.stdout
+
+
+def test_migration_adds_the_compensation_section_to_an_older_store():
+    """A store written before the section existed gains it without losing anything."""
+    home = _v1_store_home("deposits-section-")
+    with open(os.path.join(home, ".claude", "travel-credits", "inventory.md")) as fh:
+        assert "COMPENSATION_START" not in fh.read()
+
+    run(CREDITS, ["migrate", "--json"], home)
+    with open(os.path.join(home, ".claude", "travel-credits", "inventory.md")) as fh:
+        after = fh.read()
+    assert "COMPENSATION_START" in after and "COMPENSATION_END" in after
+    assert "Canceled BNA-JFK" in after, "untouched records must survive the section append"
+
+
+def test_the_advocate_skill_reads_history_for_prior_compensation():
+    """Step 4's prior-compensation check must reach deposits, not only Active.
+
+    Deposits leave Active in v2, so a Step 4 that ran `list` alone would report "no
+    prior compensation" for a passenger the airline has already paid off — throwing
+    away the strongest leverage the letter has.
+    """
+    skill = os.path.normpath(os.path.join(HERE, "..", "SKILL.md"))
+    with open(skill, encoding="utf-8") as fh:
+        text = fh.read()
+    step4 = text.split("## Step 4 —")[1].split("\n## ")[0]
+    assert 'Skill(skill: "using-travel-credits")' in step4, \
+        "Step 4 must read through the owner skill, which migrates before it reads"
+    invocations = [ln for ln in step4.split("\n")
+                   if "python3 " in ln and "credits-tracker.py" in ln]
+    assert not invocations, (
+        "a direct read here is a non-owner read: un-migrated records are skipped and the "
+        f"count: 0 gets recorded as evidence of no prior compensation — {invocations}")
+    assert "history" in step4, "it must reach deposits, not only the active list"
+
+
+def test_an_unknown_section_name_fails_loudly():
+    """The old two-section form defaulted anything not "active" to the archive."""
+    tracker = _load_tracker()
+    try:
+        tracker.section_markers("activ")
+    except ValueError as exc:
+        assert "unknown section" in str(exc), exc
+    else:
+        raise AssertionError("a mistyped section name must not silently resolve")
 
 
 # ── using-travel-credits router contract ──────────────────────────────────────

@@ -171,13 +171,24 @@ missing or self-contradictory and its answer changes the letter.
 
 ## Step 4 — Check Prior Compensation History
 
-Once you know the passenger name and airline, always run:
-`python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py list --json --passenger <name> --airline <code>`
+Once you know the passenger name and airline, make two separate invocations, filtered to that
+passenger and airline:
 
-The response carries `credits` (each with `id`, `type`, `description`, `value`, `passenger`,
-`expiry`, `days_left`, `expired`) and `count`. A `count` of 0 is a valid answer, not a failure.
-Note the result in your research documentation. If credits are found, use them as escalation
-leverage in the letter. If empty or unavailable, note that and continue.
+1. Invoke `Skill(skill: "using-travel-credits")` and run its **list** action — instruments the
+   passenger still holds.
+2. Invoke `Skill(skill: "using-travel-credits")` again and run its **compensation-history**
+   action — miles and points the airline already granted for past failures. These never appear
+   in the list.
+
+Both are required. The list alone is not a prior-compensation check.
+
+Never read the store with a direct `credits-tracker.py` call here. A direct read skips records
+not yet migrated to the current shape and reports zero, and a zero from this step is recorded as
+evidence of no prior compensation. Reaching the store through the owner skill is what makes a
+zero mean zero.
+
+Note both results in your research documentation. If either is non-empty, use it as escalation
+leverage. If the skill reports the store missing or unreadable, note that and continue.
 
 Proceed immediately to Step 5.
 
@@ -430,10 +441,15 @@ Step 11.
 After the letter is finalized, always file it:
 `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py file --json --airline <code> --flight <flight> --flight-date <YYYY-MM-DD> --route <ORIG-DEST> --passenger <name> --category <CAT> --severity <SEV> --summary "<1-2 sentences>" --outcome "<what was requested>"`
 
-If the user returns with a compensation outcome, log it in both systems:
-`python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py add --json --type VOUCHER --description "..." --value <amount> --passenger "..." --airline <code> --expiry <date> --restrictions "..."`
+If the user returns with a compensation outcome, log it in both systems.
+
+Pick `--type` by what the airline actually gave, and read `--help` for the accepted set — never infer a type from what an abbreviation looks like it spells. Two that get confused: a grant of **miles** is `MILES` and a grant of **points** is `POINTS`; `COMP` is a Companion Certificate and is not the type for compensation of any other kind.
+
+`python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py add --json --type <TYPE> --description "..." --value <amount> --passenger "..." --airline <code> --expiry <date> --restrictions "..."`
 Returns `{"added": {…the stored record…}, "days_to_expiry": <int|null>}`. On a bad `--expiry` it returns
 `{"error": "invalid_expiry", …}`, exits non-zero, and writes nothing — re-ask for the date rather than retrying.
+
+`MILES` and `POINTS` record as compensation history rather than available inventory, and reject `--expiry`. Omit it rather than inventing one.
 `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py resolve --json --id <id> --resolution <RESOLVED|PARTIAL|DENIED> --note "<what they got>"`
 
 Finish here.

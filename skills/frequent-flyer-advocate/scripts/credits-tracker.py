@@ -54,9 +54,35 @@ INVENTORY_PATH = os.path.join(CREDITS_DIR, "inventory.md")
 # does, because migration belongs to the owner skill alone (see write_inventory()
 # and cmd_migrate()). Bump only alongside a migration in
 # skills/using-travel-credits — see its state-schema.md.
-SCHEMA_VERSION = 1
+#
+# v2: miles and points deposits move out of Active into the Compensation History
+#     section and take the MILES / POINTS types. They never had a held-then-applied
+#     lifecycle, so they never belonged in inventory.
+SCHEMA_VERSION = 2
 
-VALID_TYPES = ["GUC", "RUC", "COMP", "ECREDIT", "VOUCHER", "PARTNER", "AMEX", "OTHER"]
+# A value like "25000 miles", "30,000 Hilton Honors points", "8,000 SkyMiles",
+# "25,000 American AAdvantage miles". Deliberately anchored on the trailing unit
+# word rather than on free-text meaning: script-delegation's Regex Trap allows a
+# fully-enumerable pattern, and the unit vocabulary here is exactly two words.
+#
+# Any number of program-name words may sit between the amount and the unit, and the
+# unit may be fused into a program word ("SkyMiles"). An earlier form allowed at most
+# one intervening word, which silently missed "30,000 Hilton Honors points" — a shape
+# taken straight from the live store.
+#
+# The error is asymmetric, so the pattern stays conservative. A false negative leaves
+# a deposit in Active, which is the visible status quo. A false positive would move a
+# genuine credit out of the available set, which is a real loss of function. No
+# non-deposit value shape in the store ends in "miles" or "points": "1 certificate",
+# "2 nights", "347.20".
+# Anchored at both ends: the whole field must BE an amount of miles or points, not
+# merely contain one. Unanchored, "5000 miles voucher" and "1 certificate for 5000
+# miles travel" both matched and would have been pulled out of available inventory.
+DEPOSIT_VALUE_RE = re.compile(
+    r"^\s*[\d,]+\s*(?:[A-Za-z]+\s+)*[A-Za-z]*(miles|points)\b[\s.,;]*$", re.IGNORECASE)
+
+VALID_TYPES = ["GUC", "RUC", "COMP", "ECREDIT", "VOUCHER", "PARTNER", "AMEX", "OTHER",
+               "MILES", "POINTS"]
 
 TYPE_LABELS = {
     "GUC": "Global Upgrade Certificate",
@@ -67,7 +93,17 @@ TYPE_LABELS = {
     "PARTNER": "Partner Credit",
     "AMEX": "Amex Travel Credit",
     "OTHER": "Other",
+    "MILES": "Miles Deposit",
+    "POINTS": "Points Deposit",
 }
+
+# Types with no held-then-applied lifecycle. An airline that grants 25,000 miles
+# deposits them into the loyalty account at the moment of the grant — there is no
+# "issued, awaiting use" phase, and once deposited they are fungible with the rest
+# of the balance, which this file cannot shadow. They are a compensation EVENT:
+# history, not inventory. Recorded in their own section, never counted as available,
+# and with no `use` transition, because there is nothing to transition to.
+DEPOSIT_TYPES = ("MILES", "POINTS")
 
 # Common airline name → code mappings for scenario matching
 AIRLINE_ALIASES = {
@@ -240,7 +276,45 @@ def hotels_in_scenario(scenario):
     return brands
 
 
-EMPTY_INVENTORY = """# Flight Credits, Vouchers & Upgrade Certificates Inventory
+COMPENSATION_HEADING = "## Compensation History (Deposited)"
+
+# Section name -> (start marker, end marker). One mapping so a section is added by
+# adding a row, not by threading another branch through every reader and writer.
+SECTION_MARKERS = {
+    "active": ("<!-- CREDITS_START", "<!-- CREDITS_END"),
+    "archive": ("<!-- ARCHIVE_START", "<!-- ARCHIVE_END"),
+    "compensation": ("<!-- COMPENSATION_START", "<!-- COMPENSATION_END"),
+}
+
+
+def ensure_compensation_section(content):
+    """Append the compensation section to a store written before it existed.
+
+    Stores created by an earlier version carry only Active and Archive. Appending on
+    demand keeps every other byte untouched — the alternative, reformatting the store
+    to the current template, would drop anything the template does not know about.
+    """
+    if SECTION_MARKERS["compensation"][0] in content:
+        return content
+    return (content.rstrip("\n")
+            + f"\n\n{COMPENSATION_HEADING}\n\n"
+            + "<!-- COMPENSATION_START — do not edit this marker -->\n"
+            + "<!-- COMPENSATION_END — do not edit this marker -->\n")
+
+
+def section_markers(section):
+    """Markers bounding a section. Unknown names fail loudly rather than defaulting.
+
+    The old two-section form fell through to the archive for anything that was not
+    "active", so a typo silently read or wrote the wrong section.
+    """
+    try:
+        return SECTION_MARKERS[section]
+    except KeyError:
+        raise ValueError(
+            f"unknown section {section!r} — expected one of {', '.join(SECTION_MARKERS)}")
+
+EMPTY_INVENTORY = f"""# Flight Credits, Vouchers & Upgrade Certificates Inventory
 
 Track all active credits here. Use `credits-tracker.py` for all updates — do not hand-edit.
 
@@ -253,6 +327,11 @@ Track all active credits here. Use `credits-tracker.py` for all updates — do n
 
 <!-- ARCHIVE_START — do not edit this marker -->
 <!-- ARCHIVE_END — do not edit this marker -->
+
+{COMPENSATION_HEADING}
+
+<!-- COMPENSATION_START — do not edit this marker -->
+<!-- COMPENSATION_END — do not edit this marker -->
 """
 
 
@@ -721,15 +800,141 @@ def stamp_schema_version(content):
     return "\n".join(out), stats
 
 
+def split_records(block):
+    """Split a section body into (preamble_lines, [(heading, body_lines), ...])."""
+    lines = block.split("\n")
+    first = next((i for i, ln in enumerate(lines) if ln.strip().startswith("### #")), None)
+    if first is None:
+        return lines, []
+    preamble, records = lines[:first], []
+    i = first
+    while i < len(lines):
+        j = i + 1
+        while j < len(lines) and not lines[j].strip().startswith("### #"):
+            j += 1
+        records.append((lines[i], lines[i + 1:j]))
+        i = j
+    return preamble, records
+
+
+def replace_section_block(content, section, new_block):
+    """Swap a section's body between its markers, leaving the rest byte-identical."""
+    start_marker, end_marker = section_markers(section)
+    start_idx = content.find(start_marker)
+    end_idx = content.find(end_marker)
+    if start_idx == -1 or end_idx == -1:
+        raise ValueError(f"section {section!r} markers not found")
+    block_start = content.index("\n", start_idx) + 1
+    return content[:block_start] + new_block + content[end_idx:]
+
+
+def record_version(body_lines):
+    """The record's stamped version, or None when absent or unparseable.
+
+    Reads the last occurrence, matching parse_credits(), which overwrites per field
+    line and so ends up holding that one.
+    """
+    found = None
+    for line in body_lines:
+        stripped = line.strip()
+        if stripped.startswith(VERSION_LINE_PREFIX):
+            found = stripped[len(VERSION_LINE_PREFIX):].strip()
+    if found is None:
+        return None
+    try:
+        return int(found)
+    except ValueError:
+        return None
+
+
+def deposit_unit(body_lines):
+    """MILES / POINTS if this record's Value names one, else None.
+
+    Reads the Value field the way parse_credits() does. Nothing else is consulted —
+    a description mentioning "miles" is prose, and guessing from it is the judgment
+    call script-delegation keeps out of a script.
+    """
+    for line in body_lines:
+        kv = re.match(r"- \*\*(.+?)\*\*:\s*(.*)", line.strip())
+        if kv and kv.group(1).lower() == "value":
+            match = DEPOSIT_VALUE_RE.search(kv.group(2))
+            if match:
+                return match.group(1).upper()
+            return None
+    return None
+
+
+def relocate_deposits(content):
+    """v1 -> v2: move miles/points grants out of Active into Compensation History.
+
+    They never had a held-then-applied lifecycle — the balance is in the loyalty
+    account from the moment of the grant — so Active counted them as available
+    forever and `use` was the only exit, asserting an event that never happened.
+
+    The record's block is moved verbatim apart from its type token, so every field
+    survives, including ones the current formatter does not know. Returns
+    (content, moved) where moved lists {id, from_type, to_type}.
+    """
+    start_marker, end_marker = section_markers("active")
+    if content.find(start_marker) == -1 or content.find(end_marker) == -1:
+        return content, []
+
+    block_start = content.index("\n", content.find(start_marker)) + 1
+    active_block = content[block_start:content.find(end_marker)]
+    preamble, records = split_records(active_block)
+
+    kept, moving, moved = [], [], []
+    for heading, body in records:
+        match = re.match(r"(\s*### #(\d+)\s*[—–-]\s*)\[([A-Z]+)\](.*)", heading)
+        # Only records this reader successfully brought to SCHEMA_VERSION. Stamping
+        # leaves a newer or unparseable record alone, and relocating one here would
+        # rewrite a record the reader cannot read — Migration Policy keeps those as
+        # untouched no-usable-prior-state, and a move is a rewrite.
+        if match is None or record_version(body) != SCHEMA_VERSION:
+            kept.append((heading, body))
+            continue
+        # Classified by Value, whatever type the record currently carries. Keying on
+        # COMP alone would have stranded every deposit logged under another type —
+        # and the skill's only worked example was `--type VOUCHER`, so those exist.
+        unit = deposit_unit(body)
+        if unit is None or match.group(3) in DEPOSIT_TYPES:
+            kept.append((heading, body))
+            continue
+        moved.append({"id": int(match.group(2)),
+                      "from_type": match.group(3), "to_type": unit})
+        moving.append((f"{match.group(1)}[{unit}]{match.group(4)}", body))
+
+    if not moving:
+        return content, []
+
+    def render(preamble_lines, recs):
+        out = list(preamble_lines)
+        for heading, body in recs:
+            out.append(heading)
+            out.extend(body)
+        return "\n".join(out)
+
+    content = ensure_compensation_section(content)
+    content = replace_section_block(content, "active", render(preamble, kept))
+
+    comp_start, comp_end = section_markers("compensation")
+    comp_block_start = content.index("\n", content.find(comp_start)) + 1
+    comp_block = content[comp_block_start:content.find(comp_end)]
+    comp_preamble, comp_records = split_records(comp_block)
+    content = replace_section_block(
+        content, "compensation", render(comp_preamble, comp_records + moving))
+    return content, moved
+
+
 def count_record_headings(content):
-    """Every `### #` record heading inside the two section blocks.
+    """Every `### #` record heading inside every section block.
 
     Counted the way parse_credits() scans — same markers, same leading-whitespace
-    tolerance — so it is the total that view is a subset of.
+    tolerance — so it is the total that view is a subset of. Driven off
+    SECTION_MARKERS so a new section is counted without editing this.
     """
     total = 0
-    for start_marker, end_marker in (("<!-- CREDITS_START", "<!-- CREDITS_END"),
-                                     ("<!-- ARCHIVE_START", "<!-- ARCHIVE_END")):
+    for start_marker, end_marker in SECTION_MARKERS.values():
         start_idx = content.find(start_marker)
         end_idx = content.find(end_marker)
         if start_idx == -1 or end_idx == -1:
@@ -808,12 +1013,7 @@ def parse_credits(content, section="active"):
     is_readable_version(). Callers that must account for every record
     regardless of version (next_id) work from the raw content instead.
     """
-    if section == "active":
-        start_marker = "<!-- CREDITS_START"
-        end_marker = "<!-- CREDITS_END"
-    else:
-        start_marker = "<!-- ARCHIVE_START"
-        end_marker = "<!-- ARCHIVE_END"
+    start_marker, end_marker = section_markers(section)
 
     start_idx = content.find(start_marker)
     end_idx = content.find(end_marker)
@@ -894,10 +1094,7 @@ def next_id(content):
 
 def insert_credit(content, credit_md, section="active"):
     """Insert a formatted credit entry into the inventory."""
-    if section == "active":
-        marker = "<!-- CREDITS_END"
-    else:
-        marker = "<!-- ARCHIVE_END"
+    marker = section_markers(section)[1]
 
     idx = content.find(marker)
     if idx == -1:
@@ -923,12 +1120,7 @@ def remove_credit(content, credit_id, section="active"):
         return content, None
 
     # Find and remove the block for this credit
-    if section == "active":
-        start_marker = "<!-- CREDITS_START"
-        end_marker = "<!-- CREDITS_END"
-    else:
-        start_marker = "<!-- ARCHIVE_START"
-        end_marker = "<!-- ARCHIVE_END"
+    start_marker, end_marker = section_markers(section)
 
     start_idx = content.find(start_marker)
     end_idx = content.find(end_marker)
@@ -1043,6 +1235,18 @@ def cmd_add(args):
             emit_json({"error": "invalid_type", "given": ctype, "valid": VALID_TYPES})
         sys.exit(1)
 
+    # A deposit has no expiry: the miles or points are in the loyalty account from
+    # the moment of the grant, and the program's own expiry rules govern the balance
+    # as a whole. Accepting one here would record a deadline this file cannot enforce
+    # and `expiring` would then report it as an actionable date.
+    if ctype in DEPOSIT_TYPES and args.expiry:
+        print(f"ERROR: --expiry is not valid for {ctype}. A deposit lands in the loyalty "
+              f"account on grant and has no expiry of its own.", file=sys.stderr)
+        if args.json:
+            emit_json({"error": "expiry_not_valid_for_deposit", "given_type": ctype,
+                       "deposit_types": list(DEPOSIT_TYPES)})
+        sys.exit(1)
+
     # Validate before touching storage. Parsing this after the write persisted the
     # credit and then died in a traceback, leaving a malformed record behind.
     expiry_date = None
@@ -1079,7 +1283,11 @@ def cmd_add(args):
         credit["confirmation"] = args.confirmation
 
     credit_md = format_credit(credit)
-    content = insert_credit(content, credit_md, "active")
+    # A deposit is history, not inventory — it never enters the available set, so it
+    # is written to its own section rather than to Active.
+    target = "compensation" if ctype in DEPOSIT_TYPES else "active"
+    content = ensure_compensation_section(content) if target == "compensation" else content
+    content = insert_credit(content, credit_md, target)
     write_inventory(content)
 
     days_to_expiry = None
@@ -1098,6 +1306,22 @@ def cmd_add(args):
 
 def cmd_use(args):
     content = read_inventory()
+
+    # A deposit has no use transition. The miles landed in the account on grant, and
+    # once there they are fungible with the rest of the balance — the loyalty program
+    # owns that number and this file cannot shadow it. Marking one "used" would record
+    # an application event that never happened, which is the fiction the separate
+    # section exists to prevent.
+    for deposit in parse_credits(content, "compensation"):
+        if deposit["id"] == args.id:
+            print(f"ERROR: #{args.id} is a {deposit['type']} deposit, not a credit. It has no "
+                  f"used state — the balance landed in the loyalty account when it was granted.",
+                  file=sys.stderr)
+            if args.json:
+                emit_json({"error": "deposit_has_no_use_transition", "id": args.id,
+                           "type": deposit["type"]})
+            sys.exit(1)
+
     content, credit = remove_credit(content, args.id, "active")
 
     if not credit:
@@ -1124,6 +1348,45 @@ def cmd_use(args):
         print(f"   Note: {args.note}")
 
 
+def cmd_history(args):
+    """Report deposited compensation — the events, not the inventory.
+
+    What `complaint-patterns` reads to state "third hardware failure in eight months"
+    as fact, and what intake reads for prior-compensation context. No expiry, no used
+    state, and never part of the available balance.
+    """
+    content = read_inventory()
+    deposits = parse_credits(content, "compensation")
+
+    if args.airline:
+        deposits = [d for d in deposits if d.get("airline", "").upper() == args.airline.upper()]
+    if args.brand:
+        wanted = normalize_brand(args.brand)
+        deposits = [d for d in deposits if d.get("brand_normalized") == wanted
+                    or normalize_brand(d.get("brand", "")) == wanted]
+    if args.passenger:
+        needle = args.passenger.lower()
+        deposits = [d for d in deposits if needle in d.get("passenger", "").lower()]
+
+    if args.json:
+        emit_json({"deposits": [credit_payload(d, datetime.now().date()) for d in deposits],
+                   "count": len(deposits)})
+        return
+
+    if not deposits:
+        print("No compensation deposits recorded.")
+        return
+
+    print(f"\n📜 Compensation history — {len(deposits)} deposit(s)\n")
+    print(f"{'ID':<5} {'TYPE':<8} {'ISSUER':<12} {'GRANTED':<12} {'AMOUNT':<18} DESCRIPTION")
+    print("-" * 100)
+    for d in deposits:
+        issuer = d.get("airline") or d.get("brand") or "—"
+        print(f"{d['id']:<5} {d['type']:<8} {issuer:<12} {d.get('added', '—'):<12} "
+              f"{d.get('value', '—'):<18} {d.get('description', '')}")
+    print("\nDeposits are history, not inventory — no expiry, no used state.\n")
+
+
 def cmd_migrate(args):
     """Bring every record in the store up to SCHEMA_VERSION.
 
@@ -1137,6 +1400,10 @@ def cmd_migrate(args):
     """
     content = read_inventory()
     migrated, stats = stamp_schema_version(content)
+    # v1 -> v2 relocates records between sections, which a per-record body transform
+    # cannot express. It runs after stamping so every record carries the version it
+    # is being moved under.
+    migrated, moved = relocate_deposits(migrated)
     changed = migrated != content
     if changed:
         write_inventory(migrated)
@@ -1145,13 +1412,15 @@ def cmd_migrate(args):
     # migration did; this asks what the reader can actually consume afterwards,
     # so a future divergence between the two line-matchers surfaces here as a
     # non-zero count instead of as a silently partial inventory downstream.
-    readable = (len(parse_credits(migrated, "active"))
-                + len(parse_credits(migrated, "archive")))
+    # Every section, not just active+archive: count_record_headings() scans them all,
+    # so omitting one here would report its records as unconsumable and stop the
+    # router's Step 3 on a store that is entirely fine.
+    readable = sum(len(parse_credits(migrated, name)) for name in SECTION_MARKERS)
     unconsumable = count_record_headings(migrated) - readable
 
     if args.json:
         emit_json({"schema_version": SCHEMA_VERSION, "changed": changed,
-                   "unconsumable": unconsumable, **stats})
+                   "unconsumable": unconsumable, "deposits_relocated": moved, **stats})
         return
 
     if not changed:
@@ -1164,6 +1433,9 @@ def cmd_migrate(args):
         print(f"   ⚠️  Left untouched, newer than this script: {stats['skipped_newer']}")
     if stats["unreadable"]:
         print(f"   ⚠️  Unreadable version line: {stats['unreadable']}")
+    for entry in moved:
+        print(f"   Moved #{entry['id']} to compensation history: "
+              f"[{entry['from_type']}] → [{entry['to_type']}]")
     if unconsumable:
         print(f"   ⚠️  Records the reader cannot consume: {unconsumable}")
 
@@ -1595,6 +1867,12 @@ Examples:
     # migrate — owner-skill operation, see cmd_migrate()
     sub.add_parser("migrate", help="Bring every record up to the current schema version (owner skill only)", parents=[common])
 
+    # history — deposited compensation, see cmd_history()
+    hist = sub.add_parser("history", help="Show deposited compensation (miles/points grants) — history, not inventory", parents=[common])
+    hist.add_argument("--airline", help="Filter by airline code")
+    hist.add_argument("--brand", help="Filter by hotel/loyalty brand")
+    hist.add_argument("--passenger", help="Filter by passenger name (substring)")
+
     # Read before parsing: an argparse failure exits before args exist, and that
     # exit still has to honour the JSON contract.
     json_mode = "--json" in sys.argv
@@ -1616,6 +1894,7 @@ Examples:
             "link": cmd_link,
             "status": cmd_status,
             "migrate": cmd_migrate,
+            "history": cmd_history,
         }[args.command](args)
     except SystemExit as exc:
         # Any exit that skipped emit_json still owes the caller an object: under
