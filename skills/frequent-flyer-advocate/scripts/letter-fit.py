@@ -13,7 +13,13 @@ Usage:
   letter-fit.py --airline DL --limit 4000 --file letter.txt   # limit the user read off the form
   letter-fit.py --airline AA --info                           # channels + notes, no letter
   letter-fit.py --list-airlines
-  letter-fit.py --airline AA --file letter.txt --json         # machine-readable report
+
+Output: a JSON object on stdout in every mode, diagnostics on stderr. The caller renders it
+for the user — the script measures and never writes prose (rules/script-delegation.md).
+
+A fit check reports every count, the figure the verdict was judged at, whether that figure is
+verified, the headroom, the status, formatting warnings, and the fields the form captures on
+its own. `worst_count` and `effective_count` are precomputed so no caller does the arithmetic.
 
 Data lives in airline-form-metadata.json beside this script; --metadata points at another
 copy. Only verified limits belong in it — pass --limit for a form nobody has recorded yet.
@@ -162,8 +168,11 @@ def read_letter(args):
     else:
         die("no letter supplied. Pass --file <path> or --stdin (or use --info / "
             "--list-airlines, which need no letter).")
-    # Drop the single trailing newline a file or a heredoc adds, so `--file letter.txt` and
-    # `cat letter.txt | --stdin` measure the same thing. Interior blank lines are preserved.
+    # A file or heredoc appends exactly one newline the author did not type, so exactly one
+    # comes off — unconditionally, whatever the count. Content ending in a deliberate blank
+    # line arrives as "…\n\n" and correctly keeps one newline. Stripping only when a single
+    # newline is present would leave that authored blank line double-counted. Interior blank
+    # lines are untouched.
     if text.endswith("\n"):
         text = text[:-1]
     if not text.strip():
@@ -226,6 +235,7 @@ def measure(text, channel_meta, limit_override):
 
     return {
         "counts": counts,
+        "worst_count": max(counts.values()),
         "counting_method": method,
         "inflation_applied": inflation,
         "effective_count": effective,
@@ -270,108 +280,9 @@ def build_report(text, airline, channel_name, airline_meta, channel_meta, limit_
     return report
 
 
-STATUS_LINES = {
-    "NO_LIMIT": "STATUS: no character limit on this channel",
-    "FITS": "STATUS: fits",
-    "TIGHT": "STATUS: tight — trim for margin before submitting",
-    "OVERFLOW": "STATUS: OVERFLOW — do not present this draft; trim and rerun",
-}
-
-
-def print_report(r):
-    print(f"Airline: {r['airline_name']} ({r['airline']})")
-    print(f"Channel: {r['channel']}")
-    if r["url"]:
-        print(f"URL: {r['url']}")
-    limit = r["char_limit"]
-    if limit is None:
-        print("Char limit: none recorded for this channel")
-    else:
-        verified = "verified" if r["limit_verified"] else "UNVERIFIED"
-        source = r["limit_source"] or "no source recorded"
-        print(f"Char limit: {limit} ({verified} — {source})")
-    print(f"Counting method: {r['counting_method']}")
-    print()
-    print("Counts:")
-    for name, value in r["counts"].items():
-        print(f"  {name:<16} {value}")
-    print(f"  {'worst case':<16} {max(r['counts'].values())}")
-
-    if r["inflation_applied"] is not None:
-        print()
-        print(f"Counting method is not established for this form, so the worst count is "
-              f"inflated by ×{r['inflation_applied']} → {r['effective_count']}.")
-    if limit is not None:
-        print()
-        print(f"Judged at: {r['effective_count']} / {limit} (headroom {r['headroom']:+d})")
-    print(STATUS_LINES[r["status"]])
-    if limit is not None and not r["count_verified"]:
-        print("         (count UNVERIFIED — the form's own counter is the final word)")
-
-    if r["formatting_warnings"]:
-        print()
-        print("Formatting warnings:")
-        for w in r["formatting_warnings"]:
-            print(f"  - {w}")
-
-    prefilled = r["prefilled_fields"]
-    if isinstance(prefilled, list) and prefilled:
-        print()
-        print(f"Form already captures: {', '.join(prefilled)}")
-        print("  Drop these from the letter body; keep the loyalty tier in the opener.")
-
-    if r["channel_notes"]:
-        print()
-        print(f"Notes: {r['channel_notes']}")
-
-
-def cmd_list_airlines(md, as_json):
-    airlines = md.get("airlines", {})
-    if as_json:
-        print(json.dumps(airlines, indent=2, ensure_ascii=False))
-        return 0
-    if not airlines:
-        print("No airlines in metadata.")
-        return 0
-    print(f"{'Code':<6} {'Airline':<24} Channels")
-    print(f"{'-' * 6} {'-' * 24} {'-' * 40}")
-    for code in sorted(airlines):
-        meta = airlines[code]
-        chans = []
-        for name, ch in sorted(meta.get("channels", {}).items()):
-            limit = ch.get("char_limit")
-            chans.append(f"{name}({limit if limit is not None else 'no limit'})")
-        print(f"{code:<6} {meta.get('name', code):<24} {', '.join(chans)}")
-    print()
-    print("Any airline not listed still works with an explicit --limit <N>.")
-    return 0
-
-
-def cmd_info(airline, airline_meta, as_json):
-    if as_json:
-        print(json.dumps({airline: airline_meta}, indent=2, ensure_ascii=False))
-        return 0
-    print(f"{airline_meta.get('name', airline)} ({airline})")
-    for name, ch in sorted(airline_meta.get("channels", {}).items()):
-        print()
-        print(f"  {name}")
-        limit = ch.get("char_limit")
-        print(f"    char limit:  {limit if limit is not None else 'none'}"
-              f"{'' if limit is None else (' (verified)' if ch.get('limit_verified') else ' (UNVERIFIED)')}")
-        if ch.get("url"):
-            print(f"    url:         {ch['url']}")
-        if ch.get("address"):
-            print("    address:     " + ch["address"].replace("\n", "\n                 "))
-        if ch.get("counting_method"):
-            print(f"    counting:    {ch['counting_method']}")
-        prefilled = ch.get("prefilled_fields")
-        if prefilled:
-            shown = ", ".join(prefilled) if isinstance(prefilled, list) else prefilled
-            print(f"    prefilled:   {shown}")
-    if airline_meta.get("channel_notes"):
-        print()
-        print(f"  Notes: {airline_meta['channel_notes']}")
-    return 0
+def emit(payload):
+    """Write the structured result to stdout. Every mode returns data, never prose."""
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
 
 
 def main():
@@ -384,11 +295,10 @@ def main():
     p.add_argument("--stdin", action="store_true", help="read the letter from stdin")
     p.add_argument("--limit", type=int,
                    help="character limit read off the live form; overrides the metadata")
-    p.add_argument("--json", action="store_true", help="emit the report as JSON")
     p.add_argument("--info", action="store_true",
-                   help="print the airline's channels and notes; no letter needed")
+                   help="emit the airline's channels and notes; no letter needed")
     p.add_argument("--list-airlines", action="store_true",
-                   help="list airlines the metadata knows; no letter needed")
+                   help="emit the airlines the metadata knows; no letter needed")
     p.add_argument("--metadata", default=DEFAULT_METADATA_FILE,
                    help="metadata file to read (default: the one shipped beside this script)")
     args = p.parse_args()
@@ -396,7 +306,8 @@ def main():
     md = load_metadata(args.metadata)
 
     if args.list_airlines:
-        return cmd_list_airlines(md, args.json)
+        emit({"airlines": md.get("airlines", {})})
+        return 0
 
     if not args.airline:
         die("--airline is required (or use --list-airlines).")
@@ -410,18 +321,14 @@ def main():
         if airline_meta is None:
             die(f"airline {airline!r} is not in {os.path.basename(args.metadata)} "
                 f"(known: {', '.join(sorted(md.get('airlines', {}))) or 'none'}).")
-        return cmd_info(airline, airline_meta, args.json)
+        emit({"airline": airline, "metadata": airline_meta})
+        return 0
 
     text = read_letter(args)
     airline_meta, channel_meta = resolve_channel(md, airline, args.channel, args.limit,
                                                  args.metadata)
     report = build_report(text, airline, args.channel, airline_meta, channel_meta, args.limit)
-
-    if args.json:
-        print(json.dumps(report, indent=2, ensure_ascii=False))
-    else:
-        print_report(report)
-
+    emit(report)
     return 1 if report["status"] == "OVERFLOW" else 0
 
 

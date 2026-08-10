@@ -1,9 +1,9 @@
 ---
 alwaysApply: false
+applyTo: "skills/frequent-flyer-advocate/** — when writing, drafting, constructing, or compressing a complaint letter to an airline"
 description: >
   Letter quality constraints for complaint letters, including the web-form variant and its
-  character-count verification. Use when writing, drafting, constructing, or compressing a
-  complaint letter to an airline.
+  character-count verification.
 ---
 
 # Letter Quality Requirements

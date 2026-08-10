@@ -23,16 +23,16 @@ grounded in the airline's own published policies, vision statements, and federal
 - [references/flight-verification.md](references/flight-verification.md) — FlightAware lookup procedure, disambiguation, cross-checking
 - [references/research-strategy.md](references/research-strategy.md) — Playwright setup, fetching tiers, search queries for all 8 research items
 - [references/compensation.md](references/compensation.md) — severity tiers, compensation ranges, status multiplier
-- [scripts/letter-fit.py](scripts/letter-fit.py) — measures a draft against the airline's form character limit and flags markdown the form may render literally. Run in Phase 4 before presenting any form-mode letter: `python3 <this-skill-dir>/scripts/letter-fit.py --airline <code> --file <draft>`. Backed by `scripts/airline-form-metadata.json`
+- [scripts/letter-fit.py](scripts/letter-fit.py) — measures a draft against the airline's form character limit and flags markdown the form may render literally. Emits JSON on stdout in every mode. Run in Step 9 before presenting any form-mode letter: `python3 <this-skill-dir>/scripts/letter-fit.py --airline <code> --file <draft>`. Backed by `scripts/airline-form-metadata.json`
 - [scripts/credits-tracker.py](scripts/credits-tracker.py) — flight credits/vouchers inventory (shared globally via `~/.claude/travel-credits/`). Run with full path: `python3 <this-skill-dir>/scripts/credits-tracker.py`
 - [scripts/complaints-bank.py](scripts/complaints-bank.py) — past complaint history for pattern detection (shared globally via `~/.claude/complaint-bank/`). Run with full path: `python3 <this-skill-dir>/scripts/complaints-bank.py`
 
 ---
 
-## Storage Bootstrap (first run on this machine)
+## Step 1 — Bootstrap the Storage
 
-This is a one-time setup precondition for the workflow phases below, not a workflow phase
-itself. Both data stores live under `~/.claude/` so every skill shares one copy:
+One-time setup on a machine that has never run this skill. Both data stores live under
+`~/.claude/` so every skill shares one copy:
 
 - **Travel credits** — `~/.claude/travel-credits/` (shared with `jbaruch/travel-policy` — the
   two skills MUST point at the same directory)
@@ -76,18 +76,14 @@ python3 <this-skill-dir>/scripts/credits-tracker.py init --path "<dir>"
 ```
 
 If a command reports a **dangling symlink** (target missing), the cloud folder isn't mounted
-— tell the user rather than re-creating the store. Once both stores report `ready`, proceed.
+— tell the user rather than re-creating the store. Once both stores report `ready`, proceed
+immediately to Step 2.
 
 ---
 
-## Phase 1: Intake & Intelligent Questioning
+## Step 2 — Resolve Pending Complaints
 
-### First: check for pending complaints
-
-Make sure the **Storage Bootstrap** section above has run — if the complaint bank isn't set
-up yet, the command below will refuse to run and tell you to `init`/`link` first.
-
-Before anything else, run:
+Run:
 `python3 <this-skill-dir>/scripts/complaints-bank.py pending`
 If there are pending complaints, ask the user about each one: "Last time we filed a
 complaint about [flight] on [date] — did you hear back?" Record the resolution with
@@ -95,9 +91,12 @@ complaint about [flight] on [date] — did you hear back?" Record the resolution
 or ESCALATED if they have an update. Use CLOSED if they never heard back or don't want
 to track it further. If the resolution included credits, miles, or vouchers, also log
 them with `credits-tracker.py add` so the travel credits inventory stays current.
-Then proceed with the new complaint.
 
-### Intake
+If nothing is pending, say nothing and proceed. Proceed immediately to Step 3.
+
+---
+
+## Step 3 — Gather the Incident Details
 
 Start by asking the user to describe what happened in their own words. Do NOT present a
 long questionnaire. Listen, then ask targeted follow-ups based on what's missing.
@@ -116,14 +115,15 @@ long questionnaire. Listen, then ask targeted follow-ups based on what's missing
 ### If the channel is a web form
 
 Run `python3 <this-skill-dir>/scripts/letter-fit.py --airline <code> --info` for what is
-already recorded about that airline's form. Then fill the gaps from the user:
+already recorded about that airline's form. It emits JSON; read `metadata.channels` for the
+recorded limit and prefilled fields. Then fill the gaps from the user:
 
 - **Character limit** — ask them to read it off the form. Airlines not in the metadata have
-  none recorded; pass whatever they report to `letter-fit.py --limit <N>` in Phase 4.
+  none recorded; pass whatever they report to `letter-fit.py --limit <N>` in Step 9.
 - **Fields the form captures separately** — passenger name, loyalty number, flight number,
   date, route are typical. Anything the form collects is data the letter body can drop.
 
-Record both answers. Phase 4 needs them.
+Record both answers. Steps 8 and 9 need them.
 
 ### Context-dependent follow-ups
 
@@ -152,26 +152,35 @@ relevant.
 
 ### When you have enough
 
-Summarize what you understand back to the user and confirm before moving to verification.
+Summarize what you understand back to the user and confirm. Then proceed immediately to
+Step 4.
 
-### Check prior compensation history
+---
+
+## Step 4 — Check Prior Compensation History
 
 Once you know the passenger name and airline, always run:
 `python3 <this-skill-dir>/scripts/credits-tracker.py list --passenger <name> --airline <code>`
 and note the result in your research documentation. If credits are found, use them as
 escalation leverage in the letter. If empty or unavailable, note that and continue.
 
-### Check complaint history
-
-Also run:
-`python3 <this-skill-dir>/scripts/complaints-bank.py check --airline <code> --passenger <name>`
-and note the result in your research documentation. If patterns exist (same category 2+
-times, prior DENIED complaints, same route recurring), hold them for Phase 4 — see the
-complaint-patterns rule for when to use them and when not to.
+Proceed immediately to Step 5.
 
 ---
 
-## Phase 2: Flight Verification
+## Step 5 — Check Complaint History
+
+Run:
+`python3 <this-skill-dir>/scripts/complaints-bank.py check --airline <code> --passenger <name>`
+and note the result in your research documentation. If patterns exist (same category 2+
+times, prior DENIED complaints, same route recurring), hold them for Step 8 — see the
+complaint-patterns rule for when to use them and when not to.
+
+Proceed immediately to Step 6.
+
+---
+
+## Step 6 — Verify the Flight
 
 Before researching policies or writing anything, verify the flight details against
 FlightAware. This prevents erroneous complaints and adds independently verified data
@@ -192,12 +201,12 @@ complete verification procedure. Key points:
 6. **Use verified data in the letter** — FlightAware's timestamps, delay duration, and
    cancellation records are independent evidence that strengthens the complaint.
 
-Do NOT proceed to policy research until the flight is verified or the user explicitly
-confirms the details are correct despite any discrepancies.
+Do NOT proceed to Step 7 until the flight is verified or the user explicitly confirms the
+details are correct despite any discrepancies. Once verified, proceed immediately to Step 7.
 
 ---
 
-## Phase 3: Dynamic Research
+## Step 7 — Research the Airline's Policies
 
 Once the airline is identified, research their specific policies and commitments. Quoting
 the airline's own words back to them is what makes the letter powerful.
@@ -216,16 +225,19 @@ queries). Key points:
 3. **Research gate:** do not proceed to writing until you have usable findings from items
    1–6 (see letter-quality rule for verbatim quote requirement)
 
-Always parallelize independent searches and fetches.
+The 8 research items are independent of each other — issue their searches and fetches
+concurrently within this step. This step still completes before Step 8 begins.
+
+Once the research gate is satisfied, proceed immediately to Step 8.
 
 ---
 
-## Phase 4: Letter Construction
+## Step 8 — Construct the Letter
 
 Build the letter using this structure. Every section has a strategic purpose.
 
-**Important: use your Phase 2 verification data.** Any flight data you confirmed via
-FlightAware in Phase 2 is verified fact — use it in the letter with explicit attribution
+**Important: use your Step 6 verification data.** Any flight data you confirmed via
+FlightAware in Step 6 is verified fact — use it in the letter with explicit attribution
 (e.g., "per FlightAware flight tracking records"). This is not fabrication; you already
 confirmed it. If FlightAware provided timestamps, delay durations, or flight status,
 these MUST appear in the incident narrative attributed to "publicly available flight
@@ -236,11 +248,11 @@ letter's strongest assets.
 Concise; include flight number, date, and loyalty tier if applicable.
 Example: "Diamond Medallion Member — Unacceptable Experience on DL1234, Feb 15, 2026"
 
-### 1. Opening: Establish the relationship
+### Opening — establish the relationship
 Lead with loyalty — years of patronage, miles flown, tier status, emotional connection to
 the brand. (See letter-quality rule for specific requirements.)
 
-### 2. Incident narrative
+### Incident narrative
 Chronological, factual, specific. Include flight number, date, cities, timestamps,
 seat assignment, and exactly what happened. Use dispassionate language — facts speak for
 themselves. Note crew/agent responses factually.
@@ -248,12 +260,12 @@ themselves. Note crew/agent responses factually.
 Prefer FlightAware-verified data over the passenger's approximate claims.
 (See letter-quality rule for specific requirements.)
 
-### 3. Impact statement
+### Impact statement
 Concrete consequences: financial losses, missed events, hours wasted, family stress.
 Quantify where possible. "The 11-hour delay caused me to miss my daughter's college
 graduation — an event that cannot be rescheduled."
 
-### 4. The airline's own words vs. reality
+### The airline's own words vs. reality
 Quote the airline's mission statement, vision, Customer Service Plan, or Contract of
 Carriage — then contrast with actual experience.
 
@@ -263,16 +275,16 @@ Carriage — then contrast with actual experience.
 > "[Airline CEO]'s letter to customers promises '[aspirational quote].' On Flight 1234,
 > that promise was broken when [specific failure]."
 
-### 5. Regulatory basis
+### Regulatory basis
 Cite specific regulations violated or that entitle the passenger to compensation —
 DOT rules, FAA Reauthorization Act provisions, or enforcement precedent. Be precise;
 cite the specific rule, not vague references to "federal regulations."
 
-### 6. Requested remedy
+### Requested remedy
 Specific, calibrated, reasonable but firm. Read [references/compensation.md](references/compensation.md)
 for severity tiers and ranges. Always request a response within 14–21 business days.
 
-### 7. Closing
+### Closing
 Express that you value the relationship and want to continue it, but make clear that the
 response will influence future loyalty. State — factually, not as a threat — that you are
 aware of your right to file a DOT complaint if the matter is not resolved satisfactorily.
@@ -283,57 +295,67 @@ Concise but thorough.
 
 ### Form-mode variant
 
-Long form is the default and stays unchanged for email and paper mail. When Phase 1 recorded
+Long form is the default and stays unchanged for email and paper mail. When Step 3 recorded
 a **web form**, build a second, shorter variant instead:
 
-- Drop what the form captures in its own fields (Phase 1 recorded which). The form shows the
+- Drop what the form captures in its own fields (Step 3 recorded which). The form shows the
   agent those values already; repeating them spends the character budget twice.
 - Keep every mandatory element the letter-quality rule marks as surviving compression — the
   loyalty tier in the opening sentence survives even when the loyalty number is dropped.
 - Write plain prose. Markdown bold, headings, bullets, blockquotes, and links may render as
   literal punctuation in a plain-text field.
 
-### Verify the fit before presenting (form mode only)
+For an email or paper-mail letter there is nothing to measure — skip to Step 10. Otherwise
+proceed immediately to Step 9.
 
-Never present a form-mode letter on your own character count. Write the draft to a file and
-measure it:
+---
+
+## Step 9 — Verify the Letter Fits the Form
+
+Form mode only. Never present a form-mode letter on your own character count. Write the
+draft to a file and measure it:
 
 ```bash
 python3 <this-skill-dir>/scripts/letter-fit.py --airline <code> --file <draft-path>
-# add --limit <N> when Phase 1 got a limit for an airline the metadata doesn't record
+# add --limit <N> when Step 3 got a limit for an airline the metadata doesn't record
 ```
 
-Exit 0 means it fits, 1 means it overflows, 2 means the invocation or metadata is wrong.
+Exit 0 means it fits, 1 means it overflows, 2 means the invocation or metadata is wrong. The
+script emits a JSON report; read the verdict from it rather than recomputing anything.
 
 - **Exit 1** — trim and rerun. Do not show the user an overflowing draft.
-- **Formatting warnings** — strip the flagged markup and rerun.
-- **Exit 0** — present the letter, and show the user the script's output rather than a count
-  of your own. Where the report calls the count unverified, say so: the form's own counter is
-  the final word, and a draft that measures close to the limit may still be rejected by it.
-- **Exit 2** — fix what the message names, then rerun. Never fall back to counting by hand.
+- **`formatting_warnings` non-empty** — strip the flagged markup and rerun.
+- **Exit 0** — present the letter. Quote `effective_count`, `char_limit`, and `status` from
+  the report; never substitute a count of your own. Where `count_verified` is `false`, tell
+  the user the count is unverified — the form's own counter is the final word, and a draft
+  measuring close to the limit may still be rejected by it.
+- **Exit 2** — fix what the stderr message names, then rerun. Never fall back to counting
+  by hand.
 
 When the user reports back what the live form's counter actually said, add that airline's
 verified limit and counting evidence to `scripts/airline-form-metadata.json` so the next
 letter is measured rather than estimated.
 
+Proceed immediately to Step 10.
+
 ---
 
-## Phase 5: Escalation Guidance
+## Step 10 — Provide Escalation Guidance
 
 After presenting the letter, provide actionable next steps:
 
 **Where to send:**
 - Check the airline's recorded channels first:
   `python3 <this-skill-dir>/scripts/letter-fit.py --airline <code> --info`
-- Its `Notes` line reports known-dead or deprioritized channels. Where a channel is recorded
-  as unreliable, route around it rather than sending the letter into it — AA's executive
-  customer-relations email is the recorded case: web form first, paper mail to the executive
-  office for escalation.
+- Its `metadata.channel_notes` field reports known-dead or deprioritized channels. Where a
+  channel is recorded as unreliable, route around it rather than sending the letter into it
+  — AA's executive customer-relations email is the recorded case: web form first, paper mail
+  to the executive office for escalation.
 - Primary (no note to the contrary): executive customer relations email found during research
 - Secondary: standard customer care (backup/paper trail)
 - Include any airline-specific submission forms
 - If the user already contacted general customer service, see escalation-output rule.
-- If Phase 3 research turns up a channel change the metadata doesn't record, add it to
+- If Step 7 research turns up a channel change the metadata doesn't record, add it to
   `scripts/airline-form-metadata.json` under that airline's `channel_notes`.
 
 **When to file a DOT complaint (airconsumer.dot.gov):**
@@ -354,13 +376,12 @@ After presenting the letter, provide actionable next steps:
 - No response in 30 days → escalate to DOT
 - Inadequate initial response → reply once reiterating the request before escalating
 
+See escalation-output rule for what to include in output documents. Proceed immediately to
+Step 11.
+
 ---
 
-## After Completing the Letter, Escalation Plan, or Case Assessment
-
-See escalation-output rule for what to include in output documents.
-
-### File complaint to bank
+## Step 11 — File the Complaint to the Bank
 
 After the letter is finalized, always file it:
 `python3 <this-skill-dir>/scripts/complaints-bank.py file --airline <code> --flight <flight> --flight-date <YYYY-MM-DD> --route <ORIG-DEST> --passenger <name> --category <CAT> --severity <SEV> --summary "<1-2 sentences>" --outcome "<what was requested>"`
@@ -368,3 +389,5 @@ After the letter is finalized, always file it:
 If the user returns with a compensation outcome, log it in both systems:
 `python3 <this-skill-dir>/scripts/credits-tracker.py add --type VOUCHER --description "..." --value <amount> --passenger "..." --airline <code> --expiry <date> --restrictions "..."`
 `python3 <this-skill-dir>/scripts/complaints-bank.py resolve --id <id> --resolution <RESOLVED|PARTIAL|DENIED> --note "<what they got>"`
+
+Finish here.

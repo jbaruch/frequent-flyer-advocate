@@ -84,8 +84,8 @@ def one_airline(code="ZZ", name="Fixture Air", **channel_overrides):
 
 
 def report(args, stdin_text=None):
-    """Run with --json and return (parsed report, exit code)."""
-    r = run([*args, "--json"], stdin_text=stdin_text)
+    """Run a fit check and return (parsed JSON report, exit code)."""
+    r = run(args, stdin_text=stdin_text)
     assert r.returncode in (FITS, OVERFLOW), f"expected a report, got {r.returncode}\n{r.stderr}"
     return json.loads(r.stdout), r.returncode
 
@@ -252,6 +252,16 @@ def test_file_and_stdin_measure_the_same_letter():
     assert from_file["counts"]["codepoints"] == len(PLAIN_LETTER), from_file
 
 
+def test_only_the_authors_trailing_newline_survives():
+    # One newline comes off unconditionally: a file appends exactly one the author did not
+    # type. A deliberate trailing blank line arrives as "…\n\n" and must keep one newline,
+    # so an authored blank line is counted once — never zero times, never twice.
+    no_blank, _ = report(["--airline", "AA", "--stdin"], stdin_text="abc\n")
+    one_blank, _ = report(["--airline", "AA", "--stdin"], stdin_text="abc\n\n")
+    assert no_blank["counts"]["codepoints"] == 3, no_blank
+    assert one_blank["counts"]["codepoints"] == 4, one_blank
+
+
 def test_interior_blank_lines_are_preserved():
     spaced, _ = report(["--airline", "AA", "--stdin"], stdin_text="a\n\n\nb")
     assert spaced["counts"]["codepoints"] == 5, spaced
@@ -305,9 +315,9 @@ def test_unreadable_metadata_is_rejected():
 
 def test_json_report_carries_the_fields_the_skill_acts_on():
     rep, _ = report(["--airline", "AA", "--file", write_letter(PLAIN_LETTER)])
-    for key in ("airline", "channel", "char_limit", "counts", "effective_count",
-                "count_verified", "headroom", "status", "formatting_warnings",
-                "prefilled_fields", "channel_notes"):
+    for key in ("airline", "channel", "char_limit", "counts", "worst_count",
+                "effective_count", "count_verified", "headroom", "status",
+                "formatting_warnings", "prefilled_fields", "channel_notes"):
         assert key in rep, f"{key} missing from the JSON report: {sorted(rep)}"
 
 
@@ -317,23 +327,32 @@ def test_prefilled_fields_tell_the_skill_what_to_drop():
     assert "flight_number" in rep["prefilled_fields"], rep
 
 
-def test_human_output_shows_every_count_and_a_status():
-    r = run(["--airline", "AA", "--file", write_letter(PLAIN_LETTER)])
-    assert r.returncode == FITS, r.stderr
-    for label in ("codepoints", "utf8_bytes", "crlf", "html_entities", "STATUS:"):
-        assert label in r.stdout, f"{label} missing from:\n{r.stdout}"
+def test_every_counting_method_is_reported():
+    rep, _ = report(["--airline", "AA", "--file", write_letter(PLAIN_LETTER)])
+    assert set(rep["counts"]) == {"codepoints", "utf8_bytes", "crlf", "html_entities"}, rep
+    assert rep["worst_count"] == max(rep["counts"].values()), rep
+
+
+def test_stdout_is_json_in_every_mode():
+    # script-delegation: the script emits structured data; the skill renders the prose.
+    for args in (["--list-airlines"], ["--airline", "AA", "--info"],
+                 ["--airline", "AA", "--file", write_letter(PLAIN_LETTER)]):
+        r = run(args)
+        assert r.returncode == FITS, f"{args}: {r.stderr}"
+        json.loads(r.stdout)  # raises if the mode emitted prose
 
 
 def test_list_airlines_names_the_seeded_carriers():
     r = run(["--list-airlines"])
     assert r.returncode == FITS, r.stderr
-    assert "AA" in r.stdout and "WN" in r.stdout, r.stdout
+    assert set(json.loads(r.stdout)["airlines"]) >= {"AA", "WN"}, r.stdout
 
 
 def test_info_reports_channel_notes_without_a_letter():
     r = run(["--airline", "AA", "--info"])
     assert r.returncode == FITS, r.stderr
-    assert "executive" in r.stdout.lower(), f"AA's channel notes must surface:\n{r.stdout}"
+    notes = json.loads(r.stdout)["metadata"]["channel_notes"]
+    assert "executive" in notes.lower(), f"AA's channel notes must surface: {notes}"
 
 
 def test_info_on_an_unknown_airline_is_rejected():
