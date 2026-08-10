@@ -1311,20 +1311,20 @@ _V1_STORE_WITH_DEPOSITS = """# Flight Credits, Vouchers & Upgrade Certificates I
 ### #2 — [COMP] Delta Reserve companion cert 2026
 - **Schema version**: 1
 - **Value**: 1 certificate
-- **Expiry**: 2027-01-31
+- **Expiry**: 2024-01-31
 - **Airline**: DL
 - **Added**: 2026-01-15
 
 ### #3 — [COMP] 30,000 Hilton Honors points goodwill
 - **Schema version**: 1
-- **Value**: 30,000 Honors points
+- **Value**: 30,000 Hilton Honors points
 - **Brand**: HILTON
 - **Added**: 2026-05-02
 
 ### #4 — [ECREDIT] Canceled BNA-JFK
 - **Schema version**: 1
 - **Value**: 347.20
-- **Expiry**: 2026-12-15
+- **Expiry**: 2024-12-15
 - **Airline**: DL
 - **Added**: 2026-02-01
 <!-- CREDITS_END — do not edit this marker -->
@@ -1366,6 +1366,34 @@ def test_migration_moves_miles_and_points_grants_out_of_inventory():
 
     history = _json_out(run(CREDITS, ["history", "--json"], home))
     assert [d["id"] for d in history["deposits"]] == [1, 3], history
+
+
+def test_deposit_classification_covers_the_value_shapes_the_store_uses():
+    """Every unit shape seen in the live store, and the non-deposits it must not touch.
+
+    An earlier pattern allowed at most one word between the amount and the unit, so
+    "30,000 Hilton Honors points" — taken straight from the store — stayed in Active.
+    The first fixture happened to use the one-word variant and passed anyway, which is
+    a test written against the implementation rather than the requirement.
+    """
+    tracker = _load_tracker()
+    deposits = {
+        "25000 miles": "MILES",
+        "30,000 Honors points": "POINTS",
+        "30,000 Hilton Honors points": "POINTS",
+        "8,000 SkyMiles": "MILES",
+        "25,000 American AAdvantage miles": "MILES",
+        "5,000 AAdvantage miles": "MILES",
+    }
+    for value, unit in deposits.items():
+        got = tracker.deposit_unit([f"- **Value**: {value}"])
+        assert got == unit, f"{value!r} classified {got!r}, expected {unit!r}"
+
+    # A false positive moves a genuine credit out of the available set, so these matter
+    # more than the misses: none of them may classify as a deposit.
+    for value in ["1 certificate", "347.20", "$200.00", "2 nights", "1 upgrade certificate"]:
+        got = tracker.deposit_unit([f"- **Value**: {value}"])
+        assert got is None, f"{value!r} must not be treated as a deposit, got {got!r}"
 
 
 def test_migration_leaves_a_genuine_companion_certificate_in_place():
@@ -1437,7 +1465,7 @@ def test_a_deposit_rejects_an_expiry():
     home = _mktemp("deposits-expiry-")
     run(CREDITS, ["init", "--default"], home)
     r = run(CREDITS, ["add", "--json", "--type", "POINTS", "--desc", "Goodwill points",
-                      "--value", "5000 points", "--expiry", "2027-01-01"], home)
+                      "--value", "5000 points", "--expiry", "2024-01-01"], home)
     assert r.returncode != 0
     assert _json_out(r)["error"] == "expiry_not_valid_for_deposit", r.stdout
 
@@ -1453,6 +1481,22 @@ def test_migration_adds_the_compensation_section_to_an_older_store():
         after = fh.read()
     assert "COMPENSATION_START" in after and "COMPENSATION_END" in after
     assert "Canceled BNA-JFK" in after, "untouched records must survive the section append"
+
+
+def test_the_advocate_skill_reads_history_for_prior_compensation():
+    """Step 4's prior-compensation check must reach deposits, not only Active.
+
+    Deposits leave Active in v2, so a Step 4 that ran `list` alone would report "no
+    prior compensation" for a passenger the airline has already paid off — throwing
+    away the strongest leverage the letter has.
+    """
+    skill = os.path.normpath(os.path.join(HERE, "..", "SKILL.md"))
+    with open(skill, encoding="utf-8") as fh:
+        text = fh.read()
+    step4 = text.split("## Step 4 —")[1].split("\n## ")[0]
+    assert "credits-tracker.py history" in step4, \
+        "Step 4 must read compensation history, not only the active list"
+    assert "credits-tracker.py list" in step4, "it still needs the held instruments too"
 
 
 def test_an_unknown_section_name_fails_loudly():

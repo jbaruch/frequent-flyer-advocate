@@ -60,11 +60,23 @@ INVENTORY_PATH = os.path.join(CREDITS_DIR, "inventory.md")
 #     lifecycle, so they never belonged in inventory.
 SCHEMA_VERSION = 2
 
-# A value like "25000 miles", "30,000 Hilton Honors points", "8,000 SkyMiles".
-# Deliberately anchored on the trailing unit word rather than on free-text meaning:
-# script-delegation's Regex Trap allows a fully-enumerable pattern, and the unit
-# vocabulary here is exactly two words. Anything else stays where it is.
-DEPOSIT_VALUE_RE = re.compile(r"\b[\d,]+\s*(?:[A-Za-z]+\s+)?(miles|points)\b", re.IGNORECASE)
+# A value like "25000 miles", "30,000 Hilton Honors points", "8,000 SkyMiles",
+# "25,000 American AAdvantage miles". Deliberately anchored on the trailing unit
+# word rather than on free-text meaning: script-delegation's Regex Trap allows a
+# fully-enumerable pattern, and the unit vocabulary here is exactly two words.
+#
+# Any number of program-name words may sit between the amount and the unit, and the
+# unit may be fused into a program word ("SkyMiles"). An earlier form allowed at most
+# one intervening word, which silently missed "30,000 Hilton Honors points" — a shape
+# taken straight from the live store.
+#
+# The error is asymmetric, so the pattern stays conservative. A false negative leaves
+# a deposit in Active, which is the visible status quo. A false positive would move a
+# genuine credit out of the available set, which is a real loss of function. No
+# non-deposit value shape in the store ends in "miles" or "points": "1 certificate",
+# "2 nights", "347.20".
+DEPOSIT_VALUE_RE = re.compile(
+    r"\b[\d,]+\s*(?:[A-Za-z]+\s+)*[A-Za-z]*(miles|points)\b", re.IGNORECASE)
 
 VALID_TYPES = ["GUC", "RUC", "COMP", "ECREDIT", "VOUCHER", "PARTNER", "AMEX", "OTHER",
                "MILES", "POINTS"]

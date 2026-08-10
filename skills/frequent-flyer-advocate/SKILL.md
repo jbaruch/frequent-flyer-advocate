@@ -171,13 +171,24 @@ missing or self-contradictory and its answer changes the letter.
 
 ## Step 4 — Check Prior Compensation History
 
-Once you know the passenger name and airline, always run:
+Once you know the passenger name and airline, always run both:
+
 `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py list --json --passenger <name> --airline <code>`
 
-The response carries `credits` (each with `id`, `type`, `description`, `value`, `passenger`,
-`expiry`, `days_left`, `expired`) and `count`. A `count` of 0 is a valid answer, not a failure.
-Note the result in your research documentation. If credits are found, use them as escalation
-leverage in the letter. If empty or unavailable, note that and continue.
+`python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py history --json --passenger <name> --airline <code>`
+
+`list` carries `credits` (each with `id`, `type`, `description`, `value`, `passenger`,
+`expiry`, `days_left`, `expired`) and `count` — instruments the passenger still holds.
+
+`history` carries `deposits` and `count` — miles and points the airline already granted for
+past failures. These never appear in `list`: a deposit lands in the loyalty account on grant,
+so it is compensation history rather than available inventory. Running only `list` would report
+"no prior compensation" for a passenger the airline has already paid off twice, which is the
+opposite of the truth and throws away the strongest leverage in the letter.
+
+A `count` of 0 from either is a valid answer, not a failure. Note both results in your research
+documentation. If either is non-empty, use it as escalation leverage. If empty or unavailable,
+note that and continue.
 
 Proceed immediately to Step 5.
 
