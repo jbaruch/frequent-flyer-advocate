@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.27 — 2026-08-09
+
+### Added
+
+- `credits-tracker.py` takes `--json` on every subcommand, emitting one JSON object on stdout in place of the prose rendering. `coding-policy: script-delegation` Script Requirements makes a skill-invoked deterministic script JSON-producing, and this one emitted prose from 69 `print` calls across 9 commands — every consumer was parsing tables. Prose stays the default so the interactive human path and the existing `frequent-flyer-advocate` call sites are unchanged; the flag is inherited through a parent parser so `<cmd> --json` works uniformly rather than only before the subcommand.
+- Error paths emit structured payloads too — `{"error": "invalid_type", …}`, `{"error": "not_found", …}` — so a caller reads a failure from the object instead of scraping `ERROR:` off stderr. Diagnostics still go to stderr as well.
+- `store_status()` splits readiness resolution from its rendering, so prose and JSON exit `0`/`3`/`4` from one contract rather than two copies of the branching. `credit_payload()` and `days_left()` do the same for records, adding derived `days_left`, `expired`, and `brand_normalized` fields the prose rendering previously computed inline and threw away.
+- `check --json` reports `matches` and `other_passenger_matches` separately, each entry carrying its `reasons` and a `passenger_on_trip` boolean. The family-member callout was prose-only before, so a consumer had to infer from an emoji line that a credit belonged to someone off the trip.
+- Bootstrap narration moves to stderr under `--json` via `quiet_stdout()`. `init --json --default` printed its "✅ Initialized empty inventory" line to stdout ahead of the payload, leaving stdout unparseable — caught by the test asserting every command emits exactly one object, not by inspection.
+- Bare `init --json` exits `2` with `{"error": "interactive_required"}`. The remaining branch prompts for a store location, and an agent must choose one explicitly rather than answer prompts on the user's behalf.
+- Seven tests cover the contract: one object per command, status states matching exit codes across all three branches, the `check` split, a structured error, the interactive refusal, and prose remaining the default.
+
 ## 0.9.13 — 2026-06-22
 
 ### Added

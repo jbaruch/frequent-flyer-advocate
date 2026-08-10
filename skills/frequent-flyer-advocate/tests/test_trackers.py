@@ -10,6 +10,7 @@ Run directly:  python3 test_trackers.py   (exit 0 = all passed, 1 = a failure)
 Also discoverable by pytest (test_* functions).
 """
 
+import json
 import os
 import atexit
 import shutil
@@ -580,6 +581,102 @@ def test_interactive_init_does_not_wipe_hotel_only_bank():
         "hotel data must not be wiped"
     lst = run(BANK, ["--store", "hotel", "list"], home)
     assert "Hilton" in lst.stdout, f"hotel data must survive:\n{lst.stdout}"
+
+
+# ── JSON output contract (credits-tracker only) ───────────────────────────────
+
+def _json_out(result):
+    """Parse a command's stdout as one JSON object, failing loudly if it is not."""
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise AssertionError(f"stdout was not JSON ({exc}):\n{result.stdout}")
+
+
+def test_every_command_emits_one_json_object():
+    """--json produces a single parseable object on stdout for every subcommand."""
+    home = _mktemp("json-all-")
+    init = run(CREDITS, ["init", "--json", "--default"], home)
+    assert _json_out(init)["state"] == "ready"
+
+    run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "DL credit", "--value", "200.00",
+                  "--airline", "DL", "--passenger", "Baruch Sadogursky"], home)
+
+    for argv in (["status", "--json"], ["list", "--json"], ["expiring", "--json"],
+                 ["summary", "--json"],
+                 ["check", "--json", "--scenario", "Delta business JFK-CDG"]):
+        out = _json_out(run(CREDITS, argv, home))
+        assert isinstance(out, dict), f"{argv[0]} did not emit an object: {out}"
+
+
+def test_status_json_states_match_exit_codes():
+    """The JSON state and the exit code report the same readiness in every branch."""
+    ready_home = _mktemp("json-ready-")
+    run(CREDITS, ["init", "--default"], ready_home)
+    res = run(CREDITS, ["status", "--json"], ready_home)
+    assert res.returncode == 0 and _json_out(res)["state"] == "ready"
+
+    missing_home = _mktemp("json-missing-")
+    res = run(CREDITS, ["status", "--json"], missing_home)
+    assert res.returncode == 3 and _json_out(res)["state"] == "missing"
+
+    invalid_home = _mktemp("json-invalid-")
+    os.makedirs(os.path.join(invalid_home, ".claude"), exist_ok=True)
+    with open(os.path.join(invalid_home, ".claude", "travel-credits"), "w") as fh:
+        fh.write("not a directory")
+    res = run(CREDITS, ["status", "--json"], invalid_home)
+    assert res.returncode == 4 and _json_out(res)["state"] == "invalid"
+    assert _json_out(res)["reason"], "an invalid store must say why"
+
+
+def test_check_json_separates_other_passenger_matches():
+    """A family member off the trip lands in other_passenger_matches, not matches."""
+    home = _mktemp("json-check-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "AA kid credit", "--value", "189.50",
+                  "--airline", "AA", "--passenger", "Kid Sadogursky"], home)
+
+    out = _json_out(run(CREDITS, ["check", "--json", "--scenario",
+                                  "American Airlines BNA-ORD economy repo",
+                                  "--passengers", "Baruch"], home))
+    assert out["matches"] == []
+    assert len(out["other_passenger_matches"]) == 1
+    other = out["other_passenger_matches"][0]
+    assert other["passenger_on_trip"] is False
+    assert other["reasons"], "a match must carry its reasons"
+    assert out["airlines_detected"] == ["AA"]
+
+
+def test_add_error_emits_structured_payload():
+    """An agent reads a failure from JSON rather than scraping stderr prose."""
+    home = _mktemp("json-err-")
+    run(CREDITS, ["init", "--default"], home)
+    res = run(CREDITS, ["add", "--json", "--type", "NOPE", "--desc", "x", "--value", "1"], home)
+    assert res.returncode == 1
+    assert _json_out(res)["error"] == "invalid_type"
+
+
+def test_interactive_init_refuses_json_mode():
+    """Bare `init --json` cannot answer prompts on the user's behalf."""
+    home = _mktemp("json-interactive-")
+    res = run(CREDITS, ["init", "--json"], home)
+    assert res.returncode == 2
+    assert _json_out(res)["error"] == "interactive_required"
+
+
+def test_prose_remains_the_default():
+    """Existing callers that read tables are unaffected by the JSON path."""
+    home = _mktemp("json-default-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "DL credit", "--value", "200.00",
+                  "--airline", "DL"], home)
+    out = run(CREDITS, ["list"], home).stdout
+    assert "DL credit" in out
+    try:
+        json.loads(out)
+    except json.JSONDecodeError:
+        return
+    raise AssertionError("default output should be prose, not JSON")
 
 
 def main():

@@ -9,8 +9,12 @@ but credits for kids, on non-Delta airlines, or on hotel brands (Hilton, Marriot
 tracked too so nothing expires forgotten. A credit is tagged with --airline (airline issuer)
 and/or --brand (hotel/loyalty-program issuer); both filter and surface independently.
 
+Every subcommand takes --json, which replaces the prose rendering with a single
+JSON object on stdout (diagnostics stay on stderr). Agents invoking this script
+through skills/using-travel-credits always pass it; prose is the human default.
+
 Usage:
-  python3 credits-tracker.py init [--default | --path DIR]   # set up new storage
+  python3 credits-tracker.py init [--default | --path DIR] [--json]   # set up new storage
   python3 credits-tracker.py link --path DIR                  # link an existing inventory
   python3 credits-tracker.py list [--type TYPE] [--passenger NAME] [--airline CODE] [--brand NAME] [--verbose]
   python3 credits-tracker.py add --type TYPE --description DESC --value VALUE --passenger NAME [--expiry YYYY-MM-DD] [--airline CODE] [--brand NAME] [--restrictions TEXT] [--confirmation CODE]
@@ -34,6 +38,7 @@ Examples:
 """
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -118,6 +123,25 @@ HOTEL_ALIASES = {
     "comfort inn": "CHOICE", "quality inn": "CHOICE",
     "best western": "BESTWESTERN",
 }
+
+
+def days_left(credit, today):
+    """Whole days until a credit expires; None when undated or unparseable."""
+    if "expiry" not in credit:
+        return None
+    try:
+        return (datetime.strptime(credit["expiry"], "%Y-%m-%d").date() - today).days
+    except ValueError:
+        return None
+
+
+def credit_payload(credit, today):
+    """One credit as structured data: stored fields plus derived expiry facts."""
+    out = {k: v for k, v in credit.items() if not k.startswith("_")}
+    out["brand_normalized"] = normalize_brand(credit.get("brand", "")) or None
+    out["days_left"] = days_left(credit, today)
+    out["expired"] = out["days_left"] is not None and out["days_left"] < 0
+    return out
 
 
 def emit_json(payload):
@@ -458,20 +482,60 @@ def cmd_status(args):
 
 def cmd_link(args):
     """Link to an existing inventory directory (non-interactive)."""
-    _link(args.path)
+    with quiet_stdout(args.json):
+        _link(args.path)
+    if args.json:
+        emit_bootstrap_result()
+
+
+@contextlib.contextmanager
+def quiet_stdout(active):
+    """Route human progress lines to stderr while a JSON command runs.
+
+    Bootstrap helpers narrate what they did on stdout. In --json mode stdout
+    belongs to the payload, and a progress line ahead of it makes the output
+    unparseable — so the narration becomes a diagnostic, per
+    rules/file-hygiene.md I/O Conventions.
+    """
+    if not active:
+        yield
+        return
+    with contextlib.redirect_stdout(sys.stderr):
+        yield
+
+
+def emit_bootstrap_result():
+    """Report the store's post-bootstrap state, so a caller confirms rather than assumes."""
+    payload, _code = store_status()
+    emit_json(payload)
 
 
 def cmd_init(args):
     """Set up storage. Non-interactive with --default/--path; otherwise interactive."""
     if getattr(args, "default", False):
-        _init_default()
+        with quiet_stdout(args.json):
+            _init_default()
+        if args.json:
+            emit_bootstrap_result()
         return
     if getattr(args, "path", None) is not None:
         # Dispatch on presence, not truthiness: `init --path ""` must reach _init_custom's
         # self-error-handled diagnostic, not fall through to the interactive branch. argparse
         # leaves args.path as None when --path is absent, so None alone means "go interactive".
-        _init_custom(os.path.expanduser(args.path))
+        with quiet_stdout(args.json):
+            _init_custom(os.path.expanduser(args.path))
+        if args.json:
+            emit_bootstrap_result()
         return
+
+    if args.json:
+        # The remaining path prompts for input. An agent must choose the store
+        # location explicitly rather than answer prompts on the user's behalf.
+        print("ERROR: interactive init cannot run in --json mode; "
+              "pass --default or --path DIR", file=sys.stderr)
+        emit_json({"error": "interactive_required",
+                   "remedy": "re-run with --default or --path DIR"})
+        sys.exit(2)
 
     # Only a real store (a directory, or a symlink to one) counts as "already
     # initialized" and is eligible for reinit. An unusable path — dangling symlink,
@@ -690,10 +754,24 @@ def cmd_list(args):
         if args.brand:
             filters.append(f"brand={normalize_brand(args.brand)}")
         filter_msg = f" matching {', '.join(filters)}" if filters else ""
+        if args.json:
+            emit_json({"credits": [], "count": 0, "filters": filters})
+            return
         print(f"No active credits{filter_msg}.")
         return
 
     today = datetime.now().date()
+
+    if args.json:
+        emit_json({"credits": [credit_payload(c, today) for c in credits],
+                   "count": len(credits),
+                   "filters": [f for f in (
+                       f"type={args.type.upper()}" if args.type else None,
+                       f"passenger={args.passenger}" if args.passenger else None,
+                       f"airline={args.airline}" if args.airline else None,
+                       f"brand={normalize_brand(args.brand)}" if args.brand else None,
+                   ) if f]})
+        return
 
     if args.verbose:
         for c in credits:
@@ -846,6 +924,17 @@ def cmd_expiring(args):
 
     expiring.sort(key=lambda x: x["_days_left"])
 
+    if args.json:
+        emit_json({
+            "as_of": today.isoformat(),
+            "window_days": days,
+            "expiring": [credit_payload(c, today) for c in expiring],
+            "count": len(expiring),
+            "no_expiry_count": len(no_expiry),
+            "no_expiry": [credit_payload(c, today) for c in no_expiry],
+        })
+        return
+
     if not expiring:
         filter_msg = f" for {args.passenger}" if args.passenger else ""
         print(f"No credits{filter_msg} expiring within {days} days. 🎉")
@@ -890,6 +979,11 @@ def cmd_check(args):
     today = datetime.now().date()
 
     if not credits:
+        if args.json:
+            emit_json({"scenario": args.scenario, "airlines_detected": [],
+                       "brands_detected": [], "matches": [], "other_passenger_matches": [],
+                       "match_count": 0})
+            return
         print("No active credits to check against.")
         return
 
@@ -902,14 +996,15 @@ def cmd_check(args):
     scenario_airlines = airlines_in_scenario(args.scenario)
     scenario_hotels = hotels_in_scenario(args.scenario)
 
-    print(f"=== Checking credits for: {args.scenario} ===")
-    if scenario_airlines:
-        print(f"    Airlines detected: {', '.join(sorted(scenario_airlines))}")
-    if scenario_hotels:
-        print(f"    Hotel brands detected: {', '.join(sorted(scenario_hotels))}")
-    if pax_filter:
-        print(f"    Filtering to passengers: {', '.join(args.passengers.split(','))}")
-    print()
+    if not args.json:
+        print(f"=== Checking credits for: {args.scenario} ===")
+        if scenario_airlines:
+            print(f"    Airlines detected: {', '.join(sorted(scenario_airlines))}")
+        if scenario_hotels:
+            print(f"    Hotel brands detected: {', '.join(sorted(scenario_hotels))}")
+        if pax_filter:
+            print(f"    Filtering to passengers: {', '.join(args.passengers.split(','))}")
+        print()
 
     applicable = []
     for c in credits:
@@ -995,6 +1090,23 @@ def cmd_check(args):
     direct = [(c, r) for c, r, in_filter in applicable if in_filter]
     other_pax = [(c, r) for c, r, in_filter in applicable if not in_filter]
 
+    if args.json:
+        def match(entry, on_trip):
+            credit, why = entry
+            payload = credit_payload(credit, today)
+            payload["reasons"] = why
+            payload["passenger_on_trip"] = on_trip
+            return payload
+        emit_json({
+            "scenario": args.scenario,
+            "airlines_detected": sorted(scenario_airlines),
+            "brands_detected": sorted(scenario_hotels),
+            "matches": [match(e, True) for e in direct],
+            "other_passenger_matches": [match(e, False) for e in other_pax],
+            "match_count": len(direct) + len(other_pax),
+        })
+        return
+
     if direct:
         print(f"Found {len(direct)} applicable credit(s):\n")
         for c, reasons in direct:
@@ -1034,6 +1146,30 @@ def cmd_summary(args):
     if args.passenger:
         active = [c for c in active if passenger_matches(c, args.passenger)]
         archived = [c for c in archived if passenger_matches(c, args.passenger)]
+
+    if args.json:
+        by_pax = {}
+        monetary = 0.0
+        soon = 0
+        for c in active:
+            by_pax.setdefault(c.get("passenger", "Any (transferable)"), []).append(
+                credit_payload(c, today))
+            try:
+                monetary += float(c.get("value", "0").replace("$", "").replace(",", ""))
+            except (ValueError, AttributeError):
+                pass
+            left = days_left(c, today)
+            if left is not None and 0 <= left <= 90:
+                soon += 1
+        emit_json({
+            "as_of": today.isoformat(),
+            "active_count": len(active),
+            "archived_count": len(archived),
+            "total_monetary_value": round(monetary, 2),
+            "expiring_within_90_days": soon,
+            "by_passenger": by_pax,
+        })
+        return
 
     filter_msg = f" for {args.passenger}" if args.passenger else ""
     print(f"=== Credits Summary{filter_msg} (as of {today}) ===\n")
