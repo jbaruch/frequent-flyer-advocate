@@ -48,6 +48,14 @@ from datetime import datetime, timedelta
 CREDITS_DIR = os.path.join(os.path.expanduser("~"), ".claude", "travel-credits")
 INVENTORY_PATH = os.path.join(CREDITS_DIR, "inventory.md")
 
+# Record shape version, per coding-policy: stateful-artifacts, which puts one on
+# every record. A record carrying no version field is not consumed — see
+# is_readable_version(). The `migrate` subcommand stamps it; no ordinary write
+# does, because migration belongs to the owner skill alone (see write_inventory()
+# and cmd_migrate()). Bump only alongside a migration in
+# skills/using-travel-credits — see its state-schema.md.
+SCHEMA_VERSION = 1
+
 VALID_TYPES = ["GUC", "RUC", "COMP", "ECREDIT", "VOUCHER", "PARTNER", "AMEX", "OTHER"]
 
 TYPE_LABELS = {
@@ -602,15 +610,204 @@ def read_inventory():
         return f.read()
 
 
+VERSION_LINE_PREFIX = "- **Schema version**:"
+
+
+def upgrade_record_body(body_lines, _from_version):
+    """Transform one record's field lines from from_version to from_version + 1.
+
+    Receives the record's field lines with the version line removed, and returns
+    the replacement set. The caller uses the return value, so a future non-identity
+    upgrade takes effect rather than bumping the version over an untransformed body.
+
+    Identity today: SCHEMA_VERSION is 1 and no shipped record predates it, so
+    there is no v0 shape to reshape. The step exists so a future bump adds a
+    branch here instead of inventing the migration machinery at that point.
+    """
+    return body_lines
+
+
+def _indent_of(line):
+    return line[:len(line) - len(line.lstrip())]
+
+
+def migrate_record(heading, body):
+    """Migrate one record's field lines. Returns (new_body, stats).
+
+    Works on the whole record rather than on the line after the heading. The
+    parser accepts `- **Schema version**:` anywhere in a record and keeps the LAST
+    occurrence, so deciding "unversioned" from the following line alone spliced a
+    second version field into a record that already had one further down.
+    """
+    stats = {"stamped": 0, "upgraded": 0, "already_current": 0,
+             "skipped_newer": 0, "unreadable": 0}
+    idxs = [k for k, ln in enumerate(body)
+            if ln.strip().startswith(VERSION_LINE_PREFIX)]
+
+    if not idxs:
+        stats["stamped"] = 1
+        return [f"{_indent_of(heading)}{VERSION_LINE_PREFIX} {SCHEMA_VERSION}"] + body, stats
+
+    # parse_credits() overwrites on each field line, so the last occurrence wins.
+    try:
+        version = int(body[idxs[-1]].strip()[len(VERSION_LINE_PREFIX):].strip())
+    except ValueError:
+        stats["unreadable"] = 1
+        return body, stats
+
+    if version > SCHEMA_VERSION:
+        stats["skipped_newer"] = 1
+        return body, stats
+
+    keep = idxs[0]
+    if version == SCHEMA_VERSION:
+        stats["already_current"] = 1
+        if len(idxs) == 1:
+            return body, stats  # verbatim — a spacing difference is not a migration
+        # Duplicate version fields make the record's version order-dependent.
+        # Collapse to one canonical line at the first position.
+        collapsed = [f"{_indent_of(body[keep])}{VERSION_LINE_PREFIX} {SCHEMA_VERSION}"]
+        collapsed += [ln for k, ln in enumerate(body) if k not in set(idxs)]
+        return collapsed, stats
+
+    stats["upgraded"] = 1
+    fields = [ln for k, ln in enumerate(body) if k not in set(idxs)]
+    while version < SCHEMA_VERSION:
+        fields = upgrade_record_body(fields, version)
+        version += 1
+    return [f"{_indent_of(body[keep])}{VERSION_LINE_PREFIX} {SCHEMA_VERSION}"] + fields, stats
+
+
+def stamp_schema_version(content):
+    """Bring every record up to SCHEMA_VERSION, per stateful-artifacts Migration Policy.
+
+    Absent version: written before versioning, reads as 1 and is stamped.
+    Older explicit version: upgraded through upgrade_record_body() and restamped.
+    Newer: left untouched — parse_credits() already refuses to consume those, and
+    an owner that cannot read a record must not rewrite it either.
+
+    A text-level edit rather than a parse/reformat round-trip: reformatting the
+    whole store would drop any field the current formatter does not know and
+    rewrite untouched records, so a migration would risk more than it fixes.
+
+    Reached only from cmd_migrate(). Migration is the owner skill's operation and
+    no other write path may perform it — see write_inventory().
+
+    Returns (migrated_text, stats).
+    """
+    stats = {"stamped": 0, "upgraded": 0, "already_current": 0,
+             "skipped_newer": 0, "unreadable": 0}
+    lines = content.split("\n")
+    out = []
+    i, n = 0, len(lines)
+    while i < n:
+        # A heading is recognized exactly as parse_credits() recognizes it — that
+        # strips first, so anchoring on column zero made the two disagree and an
+        # indented record went unmigrated while still being parsed.
+        if not lines[i].strip().startswith("### #"):
+            out.append(lines[i])
+            i += 1
+            continue
+        heading = lines[i]
+        j = i + 1
+        while j < n and not lines[j].strip().startswith("### #"):
+            j += 1
+        new_body, record_stats = migrate_record(heading, lines[i + 1:j])
+        for key, value in record_stats.items():
+            stats[key] += value
+        out.append(heading)
+        out.extend(new_body)
+        i = j
+    return "\n".join(out), stats
+
+
+def count_record_headings(content):
+    """Every `### #` record heading inside the two section blocks.
+
+    Counted the way parse_credits() scans — same markers, same leading-whitespace
+    tolerance — so it is the total that view is a subset of.
+    """
+    total = 0
+    for start_marker, end_marker in (("<!-- CREDITS_START", "<!-- CREDITS_END"),
+                                     ("<!-- ARCHIVE_START", "<!-- ARCHIVE_END")):
+        start_idx = content.find(start_marker)
+        end_idx = content.find(end_marker)
+        if start_idx == -1 or end_idx == -1:
+            continue
+        block = content[content.index("\n", start_idx) + 1:end_idx]
+        total += sum(1 for ln in block.split("\n") if ln.strip().startswith("### #"))
+    return total
+
+
 def write_inventory(content):
+    """Persist the store verbatim.
+
+    Deliberately does NOT migrate. Every skill that logs compensation reaches
+    this script directly, so a migration here would run under a non-owner
+    writer — which stateful-artifacts Migration Policy reserves to the owner
+    skill. Records this writer did not touch keep whatever version they carry;
+    the next `migrate` run by skills/using-travel-credits upgrades them.
+
+    A record this call is itself writing is stamped by format_credit(), which
+    is the writer emitting its own record in the current shape, not a migration
+    of somebody else's.
+    """
     require_initialized()
     ensure_inventory()
     with open(INVENTORY_PATH, "w") as f:
         f.write(content)
 
 
+def is_readable_version(credit):
+    """Whether this script may consume a parsed record.
+
+    Only SCHEMA_VERSION exactly, per coding-policy: stateful-artifacts Migration
+    Policy. Every caller of this script other than the owner skill is a non-owner
+    reader, and the policy has a reader treat an off-version record as read-only
+    "no usable prior state" in both directions:
+
+    - Newer: written by an updated owner. A lagging reader must not read it under
+      the wrong shape, nor rewrite it back down.
+    - Older: the owner has not upgraded it yet. A non-owner must not migrate, so
+      it declines the record and leaves it for the owner's `migrate` run.
+    - Absent: stateful-artifacts Required Attributes puts a schema_version on
+      every record, so a record without one has no auditable shape and a reader
+      cannot know what it is holding. Declined like any other off-version record.
+      `migrate` stamps it and it reads normally afterwards — the owner router runs
+      that ahead of every read, so a pre-versioning store heals on first use.
+    """
+    raw = credit.get("schema_version")
+    if raw is None:
+        print(f"WARNING: credit #{credit.get('id')} carries no schema version — skipping it. "
+              f"Run `migrate` from skills/using-travel-credits to stamp the store.",
+              file=sys.stderr)
+        return False
+    try:
+        version = int(raw)
+    except ValueError:
+        print(f"WARNING: credit #{credit.get('id')} has an unreadable schema version "
+              f"{raw!r} — skipping it", file=sys.stderr)
+        return False
+    if version > SCHEMA_VERSION:
+        print(f"WARNING: credit #{credit.get('id')} is schema version {version}, newer than "
+              f"this script's {SCHEMA_VERSION} — skipping it. Update the plugin to read it.",
+              file=sys.stderr)
+        return False
+    if version < SCHEMA_VERSION:
+        print(f"WARNING: credit #{credit.get('id')} is schema version {version}, older than "
+              f"this script's {SCHEMA_VERSION} — skipping it. Run `migrate` from "
+              f"skills/using-travel-credits to upgrade the store.", file=sys.stderr)
+        return False
+    return True
+
+
 def parse_credits(content, section="active"):
-    """Parse credit entries from the inventory file."""
+    """Parse credit entries from the inventory file.
+
+    Records off SCHEMA_VERSION in either direction are omitted — see
+    is_readable_version(). Callers that must account for every record
+    regardless of version (next_id) work from the raw content instead.
+    """
     if section == "active":
         start_marker = "<!-- CREDITS_START"
         end_marker = "<!-- CREDITS_END"
@@ -650,12 +847,15 @@ def parse_credits(content, section="active"):
 
     if current:
         credits.append(current)
-    return credits
+    return [c for c in credits if is_readable_version(c)]
 
 
 def format_credit(c):
     """Format a credit entry as markdown."""
     lines = [f"### #{c['id']} — [{c['type']}] {c['description']}"]
+    # Always the current version: parse_credits() only yields records at or below
+    # it, and the owner upgrades what it rewrites.
+    lines.append(f"- **Schema version**: {SCHEMA_VERSION}")
     if "value" in c:
         lines.append(f"- **Value**: {c['value']}")
     if "expiry" in c:
@@ -680,9 +880,15 @@ def format_credit(c):
 
 
 def next_id(content):
-    """Get next available ID from both active and archived credits."""
-    all_ids = [c["id"] for c in parse_credits(content, "active")]
-    all_ids += [c["id"] for c in parse_credits(content, "archive")]
+    """Get next available ID, counting every record in the file.
+
+    Scans headings in the raw content rather than going through parse_credits:
+    that view omits records newer than SCHEMA_VERSION, and an id allocated over
+    one of those would collide with a record this script cannot see.
+    """
+    # Leading whitespace tolerated, matching parse_credits() — a heading anchored
+    # only at column zero would miss an indented record and reissue its id.
+    all_ids = [int(n) for n in re.findall(r"^[ \t]*### #(\d+)", content, re.MULTILINE)]
     return max(all_ids, default=0) + 1
 
 
@@ -916,6 +1122,50 @@ def cmd_use(args):
     print(f"✅ Marked credit #{args.id} as used: [{credit['type']}] {credit['description']}")
     if args.note:
         print(f"   Note: {args.note}")
+
+
+def cmd_migrate(args):
+    """Bring every record in the store up to SCHEMA_VERSION.
+
+    The owner skill's operation. stateful-artifacts Migration Policy reserves
+    migration to the owner (skills/using-travel-credits); no other write path
+    in this script stamps or upgrades a record it did not itself author, so a
+    store written by a non-owner is upgraded the next time this runs.
+
+    Idempotent — a store already at SCHEMA_VERSION is left byte-identical and
+    reports changed: false.
+    """
+    content = read_inventory()
+    migrated, stats = stamp_schema_version(content)
+    changed = migrated != content
+    if changed:
+        write_inventory(migrated)
+
+    # Ask the parser rather than trusting the buckets. The buckets describe what
+    # migration did; this asks what the reader can actually consume afterwards,
+    # so a future divergence between the two line-matchers surfaces here as a
+    # non-zero count instead of as a silently partial inventory downstream.
+    readable = (len(parse_credits(migrated, "active"))
+                + len(parse_credits(migrated, "archive")))
+    unconsumable = count_record_headings(migrated) - readable
+
+    if args.json:
+        emit_json({"schema_version": SCHEMA_VERSION, "changed": changed,
+                   "unconsumable": unconsumable, **stats})
+        return
+
+    if not changed:
+        print(f"✅ Every record already at schema version {SCHEMA_VERSION} — nothing to migrate.")
+    else:
+        print(f"✅ Migrated the store to schema version {SCHEMA_VERSION}.")
+        print(f"   Stamped (no prior version): {stats['stamped']}")
+        print(f"   Upgraded from an older version: {stats['upgraded']}")
+    if stats["skipped_newer"]:
+        print(f"   ⚠️  Left untouched, newer than this script: {stats['skipped_newer']}")
+    if stats["unreadable"]:
+        print(f"   ⚠️  Unreadable version line: {stats['unreadable']}")
+    if unconsumable:
+        print(f"   ⚠️  Records the reader cannot consume: {unconsumable}")
 
 
 def cmd_expiring(args):
@@ -1342,6 +1592,9 @@ Examples:
     # status
     sub.add_parser("status", help="Report store readiness: ready (0) / missing (3) / invalid (4)", parents=[common])
 
+    # migrate — owner-skill operation, see cmd_migrate()
+    sub.add_parser("migrate", help="Bring every record up to the current schema version (owner skill only)", parents=[common])
+
     # Read before parsing: an argparse failure exits before args exist, and that
     # exit still has to honour the JSON contract.
     json_mode = "--json" in sys.argv
@@ -1362,6 +1615,7 @@ Examples:
             "init": cmd_init,
             "link": cmd_link,
             "status": cmd_status,
+            "migrate": cmd_migrate,
         }[args.command](args)
     except SystemExit as exc:
         # Any exit that skipped emit_json still owes the caller an object: under

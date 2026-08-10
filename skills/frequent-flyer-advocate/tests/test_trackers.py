@@ -860,6 +860,469 @@ def test_bank_prose_mode_is_unchanged_by_default():
     r = run(BANK, ["list"], home)
     assert "Resolution" in r.stdout and "DL1234" in r.stdout, r.stdout
     assert not r.stdout.lstrip().startswith("{"), "prose mode must not emit JSON"
+# ── schema_version stamping (credits-tracker only) ────────────────────────────
+
+def test_added_credit_carries_schema_version():
+    """Every record written must carry the schema version (stateful-artifacts)."""
+    home = _mktemp("schemaver-")
+    run(CREDITS, ["init", "--default"], home)
+    assert run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Test credit",
+                         "--value", "100.00", "--airline", "DL"], home).returncode == 0
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        text = fh.read()
+    assert "- **Schema version**: 1" in text, f"no schema version stamped:\n{text}"
+
+
+def _strip_versions(inventory):
+    """Simulate records written before versioning existed."""
+    with open(inventory) as fh:
+        text = fh.read()
+    stripped = "\n".join(l for l in text.split("\n") if "**Schema version**" not in l)
+    with open(inventory, "w") as fh:
+        fh.write(stripped)
+    assert "**Schema version**" not in stripped
+    return stripped
+
+
+def test_a_non_owner_write_does_not_migrate_other_records():
+    """stateful-artifacts reserves migration to the owner skill.
+
+    Every skill that logs compensation calls this script directly, so `add` runs
+    under a non-owner writer. It stamps the record it is itself writing and
+    leaves everyone else's alone — the store is upgraded by `migrate`, not as a
+    side effect of somebody logging a voucher.
+    """
+    home = _mktemp("schemaver-nonowner-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Legacy credit",
+                  "--value", "50.00", "--airline", "AA"], home)
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    _strip_versions(inventory)
+
+    assert run(CREDITS, ["add", "--type", "VOUCHER", "--desc", "Second credit",
+                         "--value", "25.00", "--airline", "AA"], home).returncode == 0
+    with open(inventory) as fh:
+        after = fh.read()
+    assert after.count("- **Schema version**: 1") == 1, (
+        f"a non-owner write must stamp only its own record:\n{after}")
+    assert "Legacy credit" in after, "the untouched record must survive verbatim"
+
+
+def test_migrate_stamps_records_written_before_versioning():
+    """The owner's migrate run is what brings a pre-versioning store up to date."""
+    home = _mktemp("schemaver-migrate-")
+    run(CREDITS, ["init", "--default"], home)
+    for desc in ("Legacy one", "Legacy two"):
+        run(CREDITS, ["add", "--type", "ECREDIT", "--desc", desc,
+                      "--value", "50.00", "--airline", "AA"], home)
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    _strip_versions(inventory)
+
+    r = run(CREDITS, ["migrate", "--json"], home)
+    assert r.returncode == 0, f"{r.stdout}{r.stderr}"
+    payload = _json_out(r)
+    assert payload["changed"] is True
+    assert payload["stamped"] == 2, payload
+
+    with open(inventory) as fh:
+        after = fh.read()
+    assert after.count("- **Schema version**: 1") == 2, f"not stamped:\n{after}"
+    assert "Legacy one" in after and "Legacy two" in after
+
+
+def test_an_unversioned_record_is_not_consumed_until_migrated():
+    """stateful-artifacts puts a schema_version on every record.
+
+    Without one a reader cannot know the record's shape, so it declines it rather
+    than guessing — and the owner's migrate is what makes it readable. The router
+    runs migrate ahead of every read, so a pre-versioning store heals on first use.
+    """
+    home = _mktemp("schemaver-absent-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Pre-versioning credit",
+                  "--value", "20.00", "--airline", "DL"], home)
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    _strip_versions(inventory)
+
+    listed = run(CREDITS, ["list", "--json"], home)
+    assert _json_out(listed)["count"] == 0, "an unversioned record must not be consumed"
+    assert "no schema version" in listed.stderr, listed.stderr
+    assert "migrate" in listed.stderr, "the warning must name the recovery"
+
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+    assert payload["stamped"] == 1, payload
+    assert payload["unconsumable"] == 0, payload
+    assert _json_out(run(CREDITS, ["list", "--json"], home))["count"] == 1
+
+
+def test_migrate_is_idempotent():
+    """A store already current is left byte-identical and reports no change."""
+    home = _mktemp("schemaver-idem-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Current credit",
+                  "--value", "50.00", "--airline", "AA"], home)
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        before = fh.read()
+
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+    assert payload["changed"] is False, payload
+    assert payload["stamped"] == 0 and payload["upgraded"] == 0, payload
+
+    with open(inventory) as fh:
+        assert fh.read() == before, "an idempotent migrate must not rewrite the store"
+
+
+def test_newer_schema_version_is_skipped_and_its_id_reserved():
+    """A record newer than this script reads as unusable, and its id is not reused."""
+    home = _mktemp("schemaver-newer-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Readable credit",
+                  "--value", "10.00", "--airline", "DL"], home)
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        text = fh.read()
+    # Simulate a record written by a future owner.
+    text = text.replace("- **Schema version**: 1", "- **Schema version**: 99")
+    with open(inventory, "w") as fh:
+        fh.write(text)
+
+    listed = run(CREDITS, ["list"], home)
+    assert "Readable credit" not in listed.stdout, (
+        f"a newer-versioned record must not be consumed:\n{listed.stdout}")
+
+    added = run(CREDITS, ["add", "--type", "VOUCHER", "--desc", "New credit",
+                          "--value", "20.00", "--airline", "AA"], home)
+    assert added.returncode == 0
+    assert "#2" in added.stdout, (
+        f"id must not be reused over an unreadable record:\n{added.stdout}")
+
+
+def test_a_non_owner_read_declines_an_older_record():
+    """An older record is 'no usable prior state' to a reader, not stale data to consume.
+
+    Migration Policy reserves upgrading to the owner. Every caller other than the
+    owner skill is a non-owner reader, so it must decline an off-version record
+    rather than read it under a shape the owner has since moved past.
+    """
+    home = _mktemp("schemaver-nonowner-read-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Old-shape credit",
+                  "--value", "15.00", "--airline", "DL"], home)
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        text = fh.read()
+    with open(inventory, "w") as fh:
+        fh.write(text.replace("- **Schema version**: 1", "- **Schema version**: 0"))
+
+    listed = run(CREDITS, ["list", "--json"], home)
+    assert _json_out(listed)["count"] == 0, "an older record must not be consumed"
+    assert "older than" in listed.stderr, f"the skip must be reported:\n{listed.stderr}"
+    assert "migrate" in listed.stderr, "the warning must name the recovery"
+
+    # The owner's migrate is what makes it readable again.
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+    assert payload["upgraded"] == 1, payload
+
+    with open(inventory) as fh:
+        after = fh.read()
+    assert "- **Schema version**: 0" not in after, f"stale version survived:\n{after}"
+    assert _json_out(run(CREDITS, ["list", "--json"], home))["count"] == 1, \
+        "the record must be readable once the owner has upgraded it"
+
+
+def test_migrate_does_not_rewrite_a_version_line_over_spacing():
+    """A current record whose version line spaces differently is still a no-op.
+
+    Canonicalizing the line would report changed: true for a whitespace difference
+    alone, and the owner runs migrate ahead of every read — so a cosmetic diff
+    would rewrite the store on every one of them.
+    """
+    home = _mktemp("schemaver-spacing-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Spaced credit",
+                  "--value", "15.00", "--airline", "DL"], home)
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        text = fh.read()
+    spaced = text.replace("- **Schema version**: 1", "- **Schema version**:  1")
+    with open(inventory, "w") as fh:
+        fh.write(spaced)
+
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+    assert payload["already_current"] == 1, payload
+    assert payload["changed"] is False, f"a spacing difference is not a migration: {payload}"
+
+    with open(inventory) as fh:
+        assert fh.read() == spaced, "the store must be left byte-identical"
+
+
+def test_migrate_sees_an_indented_version_line_the_way_the_parser_does():
+    """Migration and parsing must recognize a field line by the same rule.
+
+    parse_credits() strips before matching. Anchoring migration on column zero
+    made an indented version line invisible to it and visible to the parser:
+    migrate re-stamped the record and reported the store wholly readable, then
+    every later command dropped it. The router's Step 3 gate reads that report,
+    so the divergence turned into a partial inventory presented as the whole one.
+    """
+    home = _mktemp("schemaver-indent-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Indented newer",
+                  "--value", "10.00", "--airline", "DL"], home)
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        text = fh.read()
+    with open(inventory, "w") as fh:
+        fh.write(text.replace("- **Schema version**: 1", "  - **Schema version**: 99"))
+
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+    assert payload["skipped_newer"] == 1, f"indented newer record not recognized: {payload}"
+    assert payload["stamped"] == 0, f"a second version line was spliced in: {payload}"
+    assert payload["changed"] is False, f"an unmigratable record must not be rewritten: {payload}"
+
+    # The report must agree with what the reader actually consumes.
+    assert payload["unconsumable"] == 1, payload
+    assert _json_out(run(CREDITS, ["list", "--json"], home))["count"] == 0
+
+
+def test_migrate_reports_unconsumable_from_the_parser_not_the_buckets():
+    """`unconsumable` is measured by asking the parser, so it holds whatever the cause."""
+    home = _mktemp("schemaver-unconsumable-")
+    run(CREDITS, ["init", "--default"], home)
+    for desc in ("Readable one", "Readable two"):
+        run(CREDITS, ["add", "--type", "ECREDIT", "--desc", desc,
+                      "--value", "10.00", "--airline", "DL"], home)
+
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+    assert payload["unconsumable"] == 0, payload
+    assert _json_out(run(CREDITS, ["list", "--json"], home))["count"] == 2
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        text = fh.read()
+    with open(inventory, "w") as fh:
+        fh.write(text.replace("- **Schema version**: 1", "- **Schema version**: 99", 1))
+
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+    assert payload["unconsumable"] == 1, payload
+    assert _json_out(run(CREDITS, ["list", "--json"], home))["count"] == 1
+
+
+def test_next_id_counts_an_indented_record():
+    """An id is never reissued over a record the heading scan failed to see."""
+    home = _mktemp("schemaver-indentid-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Indented record",
+                  "--value", "10.00", "--airline", "DL"], home)
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        text = fh.read()
+    with open(inventory, "w") as fh:
+        fh.write(text.replace("### #1 ", "  ### #1 "))
+
+    added = _json_out(run(CREDITS, ["add", "--json", "--type", "VOUCHER",
+                                    "--desc", "Next record", "--value", "5.00"], home))
+    assert added["added"]["id"] == 2, f"id reissued over an indented record: {added}"
+
+
+def test_migrate_finds_a_version_field_anywhere_in_the_record():
+    """The parser accepts the field anywhere in a record; migration must agree.
+
+    Deciding "unversioned" from the line after the heading alone spliced a second
+    version field into a record that already carried one further down, leaving the
+    record's version order-dependent.
+    """
+    home = _mktemp("schemaver-late-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Late version field",
+                  "--value", "10.00"], home)
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        lines = fh.read().split("\n")
+    vi = next(k for k, l in enumerate(lines) if l.startswith("- **Schema version**"))
+    lines.insert(vi + 1, lines.pop(vi))  # push it below the next field
+    with open(inventory, "w") as fh:
+        fh.write("\n".join(lines))
+
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+    assert payload["stamped"] == 0, f"a second version field was spliced in: {payload}"
+    assert payload["already_current"] == 1, payload
+    assert payload["changed"] is False, payload
+
+    with open(inventory) as fh:
+        after = fh.read()
+    assert after.count("**Schema version**") == 1, f"duplicate version field:\n{after}"
+    assert _json_out(run(CREDITS, ["list", "--json"], home))["count"] == 1
+
+
+def test_migrate_collapses_duplicate_version_fields():
+    """Two version fields make a record's version depend on read order — repair it."""
+    home = _mktemp("schemaver-dup-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Duplicated", "--value", "10.00"], home)
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        text = fh.read()
+    with open(inventory, "w") as fh:
+        fh.write(text.replace("- **Schema version**: 1",
+                              "- **Schema version**: 1\n- **Schema version**: 1"))
+
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+    assert payload["changed"] is True, payload
+
+    with open(inventory) as fh:
+        after = fh.read()
+    assert after.count("**Schema version**") == 1, f"duplicates survived:\n{after}"
+    assert _json_out(run(CREDITS, ["list", "--json"], home))["count"] == 1
+
+
+def _load_tracker():
+    """Import credits-tracker.py by path — its filename has a hyphen."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("credits_tracker", CREDITS)
+    assert spec is not None and spec.loader is not None, f"cannot load {CREDITS}"
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_upgrade_record_body_return_value_is_applied():
+    """A future non-identity upgrade must actually transform the body.
+
+    The upgrade step's return was discarded, so a SCHEMA_VERSION > 1 rollout would
+    have bumped every record's version line over an untransformed body — the exact
+    silent-corruption the version exists to make auditable.
+    """
+    tracker = _load_tracker()
+    # setattr, not attribute assignment: the module is loaded by path, so a static
+    # checker has no declaration to bind these names to.
+    setattr(tracker, "SCHEMA_VERSION", 2)
+    setattr(tracker, "upgrade_record_body", lambda body, _v: body + ["- **Added by v2**: yes"])
+
+    store = ("<!-- CREDITS_START -->\n"
+             "### #1 — [ECREDIT] Old shape\n"
+             "- **Schema version**: 1\n"
+             "- **Value**: 10.00\n"
+             "<!-- CREDITS_END -->\n")
+    migrated, stats = tracker.stamp_schema_version(store)
+
+    assert stats["upgraded"] == 1, stats
+    assert "- **Added by v2**: yes" in migrated, f"upgrade output discarded:\n{migrated}"
+    assert "- **Schema version**: 2" in migrated, migrated
+    assert migrated.count("**Schema version**") == 1, migrated
+
+
+def test_migrate_reports_an_unparseable_version_line():
+    """A version line that is not an integer is counted, not silently swallowed.
+
+    The router branches on this field to stop rather than present a partial
+    inventory, so the count has to be real.
+    """
+    home = _mktemp("schemaver-garbage-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Hand-edited credit",
+                  "--value", "15.00", "--airline", "DL"], home)
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        text = fh.read()
+    with open(inventory, "w") as fh:
+        fh.write(text.replace("- **Schema version**: 1", "- **Schema version**: v1-ish"))
+
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+    assert payload["unreadable"] == 1, payload
+
+    with open(inventory) as fh:
+        assert "- **Schema version**: v1-ish" in fh.read(), "must not be guessed at"
+
+    listed = _json_out(run(CREDITS, ["list", "--json"], home))
+    assert listed["count"] == 0, f"an unreadable record must not be consumed: {listed}"
+
+
+def test_migrate_does_not_rewrite_a_newer_record_down():
+    """An owner that cannot read a record must not rewrite its version either."""
+    home = _mktemp("schemaver-preserve-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Future credit",
+                  "--value", "15.00", "--airline", "DL"], home)
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        text = fh.read()
+    with open(inventory, "w") as fh:
+        fh.write(text.replace("- **Schema version**: 1", "- **Schema version**: 99"))
+
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+    assert payload["skipped_newer"] == 1, payload
+
+    with open(inventory) as fh:
+        after = fh.read()
+    assert "- **Schema version**: 99" in after, f"newer record was downgraded:\n{after}"
+
+    # And a plain non-owner write leaves it alone too.
+    run(CREDITS, ["add", "--type", "VOUCHER", "--desc", "Current credit",
+                  "--value", "5.00", "--airline", "AA"], home)
+    with open(inventory) as fh:
+        assert "- **Schema version**: 99" in fh.read()
+
+
+# ── using-travel-credits router contract ──────────────────────────────────────
+
+ROUTER_SKILL = os.path.normpath(
+    os.path.join(HERE, "..", "..", "using-travel-credits", "SKILL.md"))
+
+# Types the router must not spell out — the accepted set is the script's.
+_SCRIPT_OWNED_TYPES = ["GUC", "RUC", "ECREDIT", "PARTNER", "AMEX"]
+
+
+def _router_invocations():
+    """Every line in the router's SKILL.md that runs the tracker."""
+    with open(ROUTER_SKILL, encoding="utf-8") as fh:
+        lines = fh.read().split("\n")
+    return [ln for ln in lines if "credits-tracker.py" in ln and "python3 " in ln]
+
+
+def test_router_invocations_use_the_plugin_mount_path():
+    # skill-authoring Script References: one path convention per SKILL.md, and it must be
+    # the one that resolves where the skill is invoked. A consumer copies these verbatim.
+    mount = (".tessl/plugins/jbaruch/frequent-flyer-advocate"
+             "/skills/frequent-flyer-advocate/scripts/credits-tracker.py")
+    invocations = _router_invocations()
+    assert invocations, f"no tracker invocations found in {ROUTER_SKILL}"
+    for line in invocations:
+        assert mount in line, f"invocation does not use the mount path:\n  {line.strip()}"
+
+
+def test_router_always_passes_json():
+    # script-delegation Script Requirements: a skill-invoked deterministic script is
+    # JSON-producing. The prose rendering is the interactive human path; an agent that
+    # scrapes it re-introduces the table-parsing the --json contract exists to end.
+    for line in _router_invocations():
+        assert "--json" in line, f"router invocation omits --json:\n  {line.strip()}"
+
+
+def test_router_does_not_restate_the_script_type_vocabulary():
+    # script-as-black-box: the accepted --type set belongs to the script. Copied into the
+    # skill it drifts, and a stale list is how an agent picks a type the script rejects.
+    with open(ROUTER_SKILL, encoding="utf-8") as fh:
+        text = fh.read()
+    leaked = [t for t in _SCRIPT_OWNED_TYPES if t in text]
+    assert not leaked, f"router restates the script's type vocabulary: {leaked}"
+    assert "--help" in text, "router must point at --help for the accepted type set"
 
 
 def main():
