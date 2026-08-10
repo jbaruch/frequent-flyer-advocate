@@ -435,24 +435,24 @@ def test_ambiguous_words_do_not_false_match_hotel_brands():
 
 
 def test_brand_tagged_non_voucher_credit_no_cross_bleed():
-    # A brand-tagged COMP (e.g. Hilton Honors points) must NOT surface in an airline scenario,
-    # even one whose words ("domestic", "companion") trip the airline-era COMP heuristic. Brand
-    # is the single gate across the whole --brand surface, not just VOUCHER.
+    # A brand-tagged COMPANION must NOT surface in an airline scenario, even one whose
+    # words ("domestic", "companion") trip the airline-era companion heuristic. Brand is
+    # the single gate across the whole --brand surface, not just VOUCHER.
     home = fresh_home()
     assert run(CREDITS, ["init", "--default"], home).returncode == 0
-    assert run(CREDITS, ["add", "--type", "COMP", "--desc", "Honors points", "--value",
-                         "30000 points", "--passenger", "Baruch", "--brand", "Hilton Honors"],
-               home).returncode == 0
+    assert run(CREDITS, ["add", "--type", "COMPANION", "--desc", "Hotel stay certificate",
+                         "--value", "1 certificate", "--passenger", "Baruch",
+                         "--brand", "Hilton Honors"], home).returncode == 0
     airline = run(CREDITS, ["check", "--scenario", "Delta round-trip domestic companion fare"], home)
     assert airline.returncode == 0, airline.stderr
-    assert "Honors points" not in airline.stdout, \
-        f"a brand-tagged COMP must not bleed into an airline scenario:\n{airline.stdout}"
+    assert "Hotel stay certificate" not in airline.stdout, \
+        f"a brand-tagged COMPANION must not bleed into an airline scenario:\n{airline.stdout}"
     assert "Companion certificate may apply" not in airline.stdout, \
-        f"the airline-era COMP heuristic must not fire for a hotel credit:\n{airline.stdout}"
+        f"the airline-era companion heuristic must not fire for a hotel credit:\n{airline.stdout}"
     # ...but it DOES surface for the matching hotel scenario.
     hotel = run(CREDITS, ["check", "--scenario", "Hilton London, 2 nights"], home)
-    assert hotel.returncode == 0 and "Honors points" in hotel.stdout, \
-        f"the brand-tagged COMP should surface for a Hilton scenario:\n{hotel.stdout}"
+    assert hotel.returncode == 0 and "Hotel stay certificate" in hotel.stdout, \
+        f"the brand-tagged COMPANION should surface for a Hilton scenario:\n{hotel.stdout}"
 
 
 def test_unambiguous_brand_phrase_still_matches():
@@ -1451,6 +1451,57 @@ def test_migration_leaves_a_newer_miles_record_where_it_is():
     assert "- **Schema version**: 99" in active, "and keep its own version"
 
 
+def test_migration_renames_comp_to_companion():
+    """`COMP` reads as "compensation" and means Companion Certificate.
+
+    Nothing rejected the misreading, and every COMP row in the live store turned out to
+    be a mistyped miles or points grant. Those move out on their Value; what remains is
+    renamed so the next reader cannot make the same mistake.
+    """
+    home = _v1_store_home("rename-comp-")
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+
+    renamed = {r["id"]: (r["from_type"], r["to_type"]) for r in payload["types_renamed"]}
+    assert renamed == {2: ("COMP", "COMPANION")}, (
+        f"only the genuine certificate is renamed; the deposits left on their Value: {payload}")
+
+    listed = _json_out(run(CREDITS, ["list", "--json"], home))
+    types = {c["id"]: c["type"] for c in listed["credits"]}
+    assert types.get(2) == "COMPANION", types
+    assert "COMP" not in types.values(), f"no COMP may survive the migration: {types}"
+
+
+def test_a_relocated_deposit_is_not_also_renamed():
+    """Order matters: a COMP row valued in miles leaves on its Value, unlabelled.
+
+    Renaming before relocating would have stamped COMPANION onto a miles deposit on its
+    way out — the exact mislabel this rename exists to end.
+    """
+    home = _v1_store_home("rename-order-")
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+
+    renamed_ids = {r["id"] for r in payload["types_renamed"]}
+    moved_ids = {m["id"] for m in payload["deposits_relocated"]}
+    assert not (renamed_ids & moved_ids), f"a record must not be both: {payload}"
+
+    history = _json_out(run(CREDITS, ["history", "--json"], home))
+    assert {d["type"] for d in history["deposits"]} == {"MILES", "POINTS"}, history
+
+
+def test_the_retired_type_is_rejected_with_its_replacement():
+    """A retired token gets a message naming what replaced it, not a bare invalid-type."""
+    home = _mktemp("rename-retired-")
+    run(CREDITS, ["init", "--default"], home)
+    r = run(CREDITS, ["add", "--json", "--type", "COMP", "--desc", "Something",
+                      "--value", "1 certificate"], home)
+    assert r.returncode != 0
+    payload = _json_out(r)
+    assert payload["error"] == "retired_type", payload
+    assert payload["renamed_to"] == "COMPANION", payload
+    # The point of the message: say where a miles grant should actually go.
+    assert "MILES" in r.stderr and "POINTS" in r.stderr, r.stderr
+
+
 def test_migration_leaves_a_genuine_companion_certificate_in_place():
     """Classification reads the Value field's unit, not the description's prose."""
     home = _v1_store_home("deposits-keep-")
@@ -1458,7 +1509,8 @@ def test_migration_leaves_a_genuine_companion_certificate_in_place():
 
     listed = _json_out(run(CREDITS, ["list", "--json"], home))
     cert = [c for c in listed["credits"] if c["id"] == 2]
-    assert cert and cert[0]["type"] == "COMP", f"a real companion cert must stay: {listed}"
+    assert cert and cert[0]["type"] == "COMPANION", \
+        f"a real companion cert must stay, renamed: {listed}"
 
 
 def test_migration_preserves_fields_the_formatter_does_not_know():
@@ -1584,6 +1636,22 @@ def _router_invocations():
     with open(ROUTER_SKILL, encoding="utf-8") as fh:
         lines = fh.read().split("\n")
     return [ln for ln in lines if "credits-tracker.py" in ln and "python3 " in ln]
+
+
+def test_the_advocate_skill_does_not_restate_the_type_vocabulary():
+    """script-as-black-box: the accepted --type set belongs to the script.
+
+    The skill needs an agent to stop guessing a type from an abbreviation, and the
+    durable way to do that is the script's own `retired_type` / `invalid_type` payloads
+    plus `--help` — not a copied list that drifts out of date silently.
+    """
+    skill = os.path.normpath(os.path.join(HERE, "..", "SKILL.md"))
+    with open(skill, encoding="utf-8") as fh:
+        text = fh.read()
+    leaked = [tok for tok in _SCRIPT_OWNED_TYPES + ["COMPANION", "MILES", "POINTS"]
+              if tok in text]
+    assert not leaked, f"SKILL.md restates the script's type vocabulary: {leaked}"
+    assert "--help" in text, "it must point at --help for the accepted set"
 
 
 def test_router_invocations_use_the_plugin_mount_path():

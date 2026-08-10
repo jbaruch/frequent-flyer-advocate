@@ -443,13 +443,18 @@ After the letter is finalized, always file it:
 
 If the user returns with a compensation outcome, log it in both systems.
 
-Pick `--type` by what the airline actually gave, and read `--help` for the accepted set — never infer a type from what an abbreviation looks like it spells. Two that get confused: a grant of **miles** is `MILES` and a grant of **points** is `POINTS`; `COMP` is a Companion Certificate and is not the type for compensation of any other kind.
+Read `--help` for the accepted `--type` set and pick by what the airline actually gave. Never infer a type from what an abbreviation looks like it spells; `--help` carries each type's meaning, and an abbreviation's plain-English reading is not it.
 
 `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py add --json --type <TYPE> --description "..." --value <amount> --passenger "..." --airline <code> --expiry <date> --restrictions "..."`
-Returns `{"added": {…the stored record…}, "days_to_expiry": <int|null>}`. On a bad `--expiry` it returns
-`{"error": "invalid_expiry", …}`, exits non-zero, and writes nothing — re-ask for the date rather than retrying.
+Returns `{"added": {…the stored record…}, "days_to_expiry": <int|null>}`. Every failure exits non-zero and writes nothing:
 
-`MILES` and `POINTS` record as compensation history rather than available inventory, and reject `--expiry`. Omit it rather than inventing one.
+- `{"error": "invalid_expiry", …}` — re-ask for the date rather than retrying.
+- `{"error": "retired_type", "renamed_to": …}` — the type was renamed; use what `renamed_to` names.
+- `{"error": "invalid_type", "valid": […]}` — pick from the set the payload carries.
+- `{"error": "expiry_not_valid_for_deposit", …}` — the type has no expiry of its own. Re-run without `--expiry`.
+
+Read the replacement out of the payload rather than guessing at it.
+
 `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py resolve --json --id <id> --resolution <RESOLVED|PARTIAL|DENIED> --note "<what they got>"`
 
 Finish here.
