@@ -120,9 +120,8 @@ migrate, so records they wrote at an older version stay as they are until this
 runs.
 
 `deposits_relocated` and `archived_deposits_relocated` list the grants moved into
-Compensation History from Active and from the archive respectively — report them
-separately, since a record leaving the archive also loses a used state that was
-never true of it.
+Compensation History from Active and from the archive respectively. Report the two
+lists separately.
 
 Idempotent: a store already current reports `changed: false` and is not
 rewritten, so running it ahead of every read costs one call.

@@ -1857,9 +1857,6 @@ def main():
     return 1 if failed else 0
 
 
-if __name__ == "__main__":
-    sys.exit(main())
-
 
 # A pre-v2 store whose miles grants sit in the ARCHIVE, already marked used. v2
 # scanned Active only, so these were never classified by Value and v3's rename
@@ -1969,3 +1966,6 @@ def test_archive_relocation_is_idempotent():
     second = _json_out(run(CREDITS, ["migrate", "--json"], home))
     assert second["changed"] is False, second
     assert second["archived_deposits_relocated"] == [], second
+
+if __name__ == "__main__":
+    sys.exit(main())
