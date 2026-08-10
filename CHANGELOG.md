@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.27 — 2026-08-10
+## 0.9.28 — 2026-08-10
 
 ### Added
 
@@ -15,7 +15,7 @@
 
 ### Changed
 
-- CI gains a deterministic gate, announced as this PR's CI scope per `ci-safety`. `.github/scripts/pre-publish-gate.sh` runs pyright at zero findings and then both test suites (71 cases). Two workflows call the same script so pre-merge and pre-publish cannot drift: the new `.github/workflows/tests.yml` on every pull request, and `.github/workflows/publish.yml` after merge via the reusable workflow's `pre-publish-script` / `python-version` inputs. Resolves #10 in full.
+- CI gains a deterministic gate, announced as this PR's CI scope per `ci-safety`. `.github/scripts/pre-publish-gate.sh` runs pyright at zero findings and then both test suites (83 cases). Two workflows call the same script so pre-merge and pre-publish cannot drift: the new `.github/workflows/tests.yml` on every pull request, and `.github/workflows/publish.yml` after merge via the reusable workflow's `pre-publish-script` / `python-version` inputs. Resolves #10 in full.
   - A gate that ran only post-merge would not have satisfied `commit-conventions` "CI must pass before merging" — the publish-side run guards the registry, the PR-side run guards the merge.
   - `pyrightconfig.json` scopes the engine to `scripts/` and `tests/` at Python 3.12. `language-diagnostics` makes gate adoption its own focused change only on a dirty tree; this one reported zero findings across the repo before the gate existed, so it lands green with no fixes attached.
   - pyright is pinned in `.github/requirements.txt`, not baked into the gate script, so Dependabot's new `pip` ecosystem renews it on the same weekly cadence as the action refs. The install runs unconditionally and the engine is invoked as `python3 -m pyright`, so the pinned build executes even where another pyright sits earlier on PATH. It ships from PyPI, so CI needs no Node toolchain.
@@ -33,7 +33,23 @@
 
 - Both scripts are FFA-only — no mirror exists in `jbaruch/jbaruch-travel-policy`, so no byte-identical-sync ceremony applies.
 - `counting_method` stays `"unknown"` for AA and WN. Resolving it needs someone to paste a known-length string into each live form and read the counter back; the inflation margin is the stand-in until then. A verified method makes the margin disappear on its own — the script uses the named counter and drops the multiplier.
-- Remaining from #10: the pyright gate. `language-diagnostics` wants the headless engine run in CI at zero findings; the tree is clean today, so it lands green whenever it is wired. Kept out of this PR to hold the CI surface to what the test gate needs.
+
+## 0.9.27 — 2026-08-09
+
+### Added
+
+- `credits-tracker.py` takes `--json` on every subcommand, emitting one JSON object on stdout in place of the prose rendering. `coding-policy: script-delegation` Script Requirements makes a skill-invoked deterministic script JSON-producing, and this one emitted prose from 69 `print` calls across 9 commands — every consumer was parsing tables. Prose stays the default so the interactive human path and the existing `frequent-flyer-advocate` call sites are unchanged; the flag is inherited through a parent parser so `<cmd> --json` works uniformly rather than only before the subcommand.
+- Error paths emit structured payloads too — `{"error": "invalid_type", …}`, `{"error": "not_found", …}` — so a caller reads a failure from the object instead of scraping `ERROR:` off stderr. Diagnostics still go to stderr as well.
+- `store_status()` splits readiness resolution from its rendering, so prose and JSON exit `0`/`3`/`4` from one contract rather than two copies of the branching. `credit_payload()` and `days_left()` do the same for records, adding derived `days_left`, `expired`, and `brand_normalized` fields the prose rendering previously computed inline and threw away.
+- `check --json` reports `matches` and `other_passenger_matches` separately, each entry carrying its `reasons` and a `passenger_on_trip` boolean. The family-member callout was prose-only before, so a consumer had to infer from an emoji line that a credit belonged to someone off the trip.
+- Bootstrap narration moves to stderr under `--json` via `quiet_stdout()`. `init --json --default` printed its "✅ Initialized empty inventory" line to stdout ahead of the payload, leaving stdout unparseable — caught by the test asserting every command emits exactly one object, not by inspection.
+- Bare `init --json` exits `2` with `{"error": "interactive_required"}`. The remaining branch prompts for a store location, and an agent must choose one explicitly rather than answer prompts on the user's behalf.
+- `--expiry` is validated before anything is written. `add` parsed the date after `write_inventory()`, so a malformed value persisted the credit and then died in a traceback with empty stdout — a bug that predates this change and that the JSON contract made unignorable. It now emits `{"error": "invalid_expiry", …}`, exits non-zero, and leaves the store byte-identical, with regression tests asserting that in both output modes.
+- The skill's own agent-facing invocations pass `--json` and state what comes back: `status` reports `{"state", "store", "reason"}` alongside its exit code, `list` reports `credits` and `count` with a zero count as a valid answer, and `add` reports the stored record plus `days_to_expiry`. `skill-authoring` Script References puts the input/output contract on the skill, and a script that emits JSON while its own skill parses prose would have left the contract undocumented on both sides.
+- The skill declares its execution mode. `skill-authoring` Title and Preamble puts `Process steps in order. Do not skip ahead.` on the first content line after the H1 for a sequential workflow; this one opened with descriptive prose, leaving an agent free to parallelize or skip phases of a letter-construction flow whose order is load-bearing — verification before research, research before drafting.
+- Every `--json` failure emits an object. `list --json` on an uninitialized store exited from `require_initialized()` with prose on stderr and empty stdout — unparseable, which reads to a caller as a crashed script rather than a reported failure. `require_initialized()` now emits `{"error": "store_not_initialized", …}`, and the `__main__` boundary guarantees the rest: any exit that skipped `emit_json` gets `{"error": "command_failed", "exit_code": N}`, including argparse failures, which is why `--json` is read from `sys.argv` before parsing. An unexpected exception emits `{"error": "unexpected_failure"}` and re-raises, under `error-handling` Outer-Boundary Carve-Out — the caller reads stdout as JSON, so a bare traceback breaks the contract it exists to serve.
+- `check --json` detects scenario airlines and brands before the empty-store return. A Delta scenario reported `airlines_detected: []` purely because no credits existed yet, making the store's contents change what the scenario was understood to say.
+- Thirteen tests cover the contract: one object per command, status states matching exit codes across all three branches, the `check` split, a structured error, the interactive refusal, prose remaining the default, a rejected `--expiry` leaving the store untouched in both modes, every failure path emitting an object, and scenario detection holding on an empty store.
 
 ## 0.9.13 — 2026-06-22
 

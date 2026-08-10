@@ -17,7 +17,8 @@ description: >
 
 ## Form Mode — Droppable From the Body
 
-- Applies to the web-form variant alone; the email and paper variants keep every element
+- Applies to the web-form variant alone
+- The email and paper variants keep every element
 - Droppable: passenger name, loyalty number, flight number, flight date, route, gate assignments
 - Droppable only where the form's own fields capture the value
 - Confirm the form's field list during intake; never infer it from the airline
