@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.9.31 — 2026-08-10
+
 ### Added
 
 - `skills/using-travel-credits` — an action router over the shared inventory at `~/.claude/travel-credits/`, giving the store one documented invocation surface. Nine steps: readiness, bootstrap, migrate, list, expiring, scenario matching, add, use, errors. Refs #30.
