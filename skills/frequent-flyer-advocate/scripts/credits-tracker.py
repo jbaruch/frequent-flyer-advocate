@@ -13,6 +13,11 @@ Every subcommand takes --json, which replaces the prose rendering with a single
 JSON object on stdout (diagnostics stay on stderr). Agent callers pass it; prose
 is the interactive human default.
 
+Every expiry decision reads reference_date(), not the wall clock. Set
+CREDITS_TRACKER_TODAY=YYYY-MM-DD to freeze it — a test seam, so fixtures can use
+fixed past dates instead of future ones that rot. Unset is the production path; a
+malformed value is fatal rather than ignored.
+
 Usage:
   python3 credits-tracker.py init [--default | --path DIR] [--json]   # set up new storage
   python3 credits-tracker.py link --path DIR                  # link an existing inventory
@@ -48,6 +53,31 @@ from datetime import datetime, timedelta
 CREDITS_DIR = os.path.join(os.path.expanduser("~"), ".claude", "travel-credits")
 INVENTORY_PATH = os.path.join(CREDITS_DIR, "inventory.md")
 
+# Test seam for "today". Every expiry decision in this script reads reference_date() rather
+# than the wall clock, so a suite can freeze the reference and assert against fixed
+# past dates — coding-policy: testing-standards Determinism wants exactly that, and
+# without it a fixture has to pin a future date that quietly starts failing when the
+# real clock passes it.
+TODAY_ENV = "CREDITS_TRACKER_TODAY"
+
+
+def reference_date():
+    """The reference date, overridable through TODAY_ENV as YYYY-MM-DD.
+
+    A malformed override is fatal rather than ignored. Falling back to the wall clock
+    would let a suite that meant to freeze time run against the real one and pass for
+    the wrong reason, which is the failure this seam exists to prevent.
+    """
+    raw = os.environ.get(TODAY_ENV)
+    if not raw:
+        return datetime.now().date()
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d").date()
+    except ValueError:
+        print(f"ERROR: {TODAY_ENV}={raw!r} is not a YYYY-MM-DD date. Unset it or fix it; "
+              f"it will not be ignored.", file=sys.stderr)
+        sys.exit(2)
+
 # Record shape version, per coding-policy: stateful-artifacts, which puts one on
 # every record. A record carrying no version field is not consumed — see
 # is_readable_version(). The `migrate` subcommand stamps it; no ordinary write
@@ -66,8 +96,9 @@ INVENTORY_PATH = os.path.join(CREDITS_DIR, "inventory.md")
 #     archived grant was never classified by Value and fell through to v3's rename,
 #     landing as COMPANION — the one outcome v3's own note says no COMP row deserved.
 #     A grant is in the account from the moment it is made, so the used state those
-#     rows carry records an event that cannot happen; the fields ride along verbatim
-#     rather than being dropped, since they are a real note somebody wrote.
+#     rows carry records an event that cannot happen. strip_used_state() removes those
+#     fields and migrate reports them as dropped_used_state, so what was believed at
+#     the time is surfaced in the migration output rather than left on the record.
 SCHEMA_VERSION = 4
 
 # A value like "25000 miles", "30,000 Hilton Honors points", "8,000 SkyMiles",
@@ -1246,7 +1277,7 @@ def cmd_list(args):
         print(f"No active credits{filter_msg}.")
         return
 
-    today = datetime.now().date()
+    today = reference_date()
 
     if args.json:
         emit_json({"credits": [credit_payload(c, today) for c in credits],
@@ -1363,7 +1394,7 @@ def cmd_add(args):
         "type": ctype,
         "description": args.description,
         "value": args.value,
-        "added": datetime.now().strftime("%Y-%m-%d"),
+        "added": reference_date().isoformat(),
     }
     if args.passenger:
         credit["passenger"] = args.passenger
@@ -1388,7 +1419,7 @@ def cmd_add(args):
 
     days_to_expiry = None
     if expiry_date:
-        days_to_expiry = (expiry_date - datetime.now().date()).days
+        days_to_expiry = (expiry_date - reference_date()).days
 
     if args.json:
         emit_json({"added": credit, "days_to_expiry": days_to_expiry})
@@ -1428,7 +1459,7 @@ def cmd_use(args):
         sys.exit(1)
 
     # Add usage metadata and move to archive
-    credit["used_date"] = datetime.now().strftime("%Y-%m-%d")
+    credit["used_date"] = reference_date().isoformat()
     if args.note:
         credit["used_note"] = args.note
 
@@ -1637,7 +1668,7 @@ def cmd_history(args):
         deposits = [d for d in deposits if needle in d.get("passenger", "").lower()]
 
     if args.json:
-        emit_json({"deposits": [credit_payload(d, datetime.now().date()) for d in deposits],
+        emit_json({"deposits": [credit_payload(d, reference_date()) for d in deposits],
                    "count": len(deposits)})
         return
 
@@ -1730,7 +1761,7 @@ def cmd_expiring(args):
     content = read_inventory()
     credits = parse_credits(content, "active")
     days = args.days or 90
-    today = datetime.now().date()
+    today = reference_date()
     cutoff = today + timedelta(days=days)
 
     if args.passenger:
@@ -1805,7 +1836,7 @@ def cmd_check(args):
     content = read_inventory()
     credits = parse_credits(content, "active")
     scenario = args.scenario.lower()
-    today = datetime.now().date()
+    today = reference_date()
 
     # Detect before the empty-store return: what the scenario names does not depend
     # on what the store holds, and reporting [] here would misreport a Delta or
@@ -1973,7 +2004,7 @@ def cmd_summary(args):
     content = read_inventory()
     active = parse_credits(content, "active")
     archived = parse_credits(content, "archive")
-    today = datetime.now().date()
+    today = reference_date()
 
     if args.passenger:
         active = [c for c in active if passenger_matches(c, args.passenger)]
@@ -2174,6 +2205,12 @@ Examples:
     # Read before parsing: an argparse failure exits before args exist, and that
     # exit still has to honour the JSON contract.
     json_mode = "--json" in sys.argv
+
+    # Validate the reference-date override up front rather than on first use. Only
+    # some paths read a date, so a lazy check would let a malformed value pass
+    # silently through the others — and a suite that meant to freeze time would run
+    # against the real clock and pass for the wrong reason on exactly those paths.
+    reference_date()
 
     try:
         args = parser.parse_args()

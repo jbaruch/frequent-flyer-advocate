@@ -72,6 +72,12 @@ Reads go through this skill. A direct `parse_credits()` read by a non-owner skip
 
 Every writer promises: writes go through `credits-tracker.py`, never a hand edit. Readers promise: absent fields are absent, not empty — a missing `Expiry` means no expiry, never an expired credit.
 
+## Reference date
+
+Every expiry decision — `list`, `expiring`, `check`, `summary`, and the `Added` / `Used date` stamps — reads `reference_date()` rather than the wall clock. `CREDITS_TRACKER_TODAY=YYYY-MM-DD` overrides it.
+
+The override is a test seam, not an operating mode: it lets a suite freeze "now" and assert against fixed past dates, which `coding-policy: testing-standards` Determinism requires. Unset is the production path. A malformed value exits 2 at startup rather than falling back to the real clock — a silent fallback would let a suite that meant to freeze time pass for the wrong reason.
+
 ## Bootstrap states
 
 `status` reports one of three, and the exit code carries it:
