@@ -181,10 +181,8 @@ Once you know the passenger name and airline, always run both:
 `expiry`, `days_left`, `expired`) and `count` — instruments the passenger still holds.
 
 `history` carries `deposits` and `count` — miles and points the airline already granted for
-past failures. These never appear in `list`: a deposit lands in the loyalty account on grant,
-so it is compensation history rather than available inventory. Running only `list` would report
-"no prior compensation" for a passenger the airline has already paid off twice, which is the
-opposite of the truth and throws away the strongest leverage in the letter.
+past failures. These never appear in `list`. Both reads are required; `list` alone is not a
+prior-compensation check.
 
 A `count` of 0 from either is a valid answer, not a failure. Note both results in your research
 documentation. If either is non-empty, use it as escalation leverage. If empty or unavailable,
@@ -449,7 +447,7 @@ Pick `--type` by what the airline actually gave, and read `--help` for the accep
 Returns `{"added": {…the stored record…}, "days_to_expiry": <int|null>}`. On a bad `--expiry` it returns
 `{"error": "invalid_expiry", …}`, exits non-zero, and writes nothing — re-ask for the date rather than retrying.
 
-`MILES` and `POINTS` are deposits: they land in the loyalty account on grant, so they record as compensation history rather than as available inventory, and they reject `--expiry`. Omit it rather than inventing one.
+`MILES` and `POINTS` record as compensation history rather than available inventory, and reject `--expiry`. Omit it rather than inventing one.
 `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py resolve --json --id <id> --resolution <RESOLVED|PARTIAL|DENIED> --note "<what they got>"`
 
 Finish here.

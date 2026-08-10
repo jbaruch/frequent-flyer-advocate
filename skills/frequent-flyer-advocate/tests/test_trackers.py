@@ -1390,10 +1390,36 @@ def test_deposit_classification_covers_the_value_shapes_the_store_uses():
         assert got == unit, f"{value!r} classified {got!r}, expected {unit!r}"
 
     # A false positive moves a genuine credit out of the available set, so these matter
-    # more than the misses: none of them may classify as a deposit.
-    for value in ["1 certificate", "347.20", "$200.00", "2 nights", "1 upgrade certificate"]:
+    # more than the misses: none of them may classify as a deposit. The last two are why
+    # the pattern is anchored at both ends — unanchored, each contained a unit and matched.
+    for value in ["1 certificate", "347.20", "$200.00", "2 nights", "1 upgrade certificate",
+                  "5000 miles voucher", "1 certificate for 5000 miles travel"]:
         got = tracker.deposit_unit([f"- **Value**: {value}"])
         assert got is None, f"{value!r} must not be treated as a deposit, got {got!r}"
+
+
+def test_migration_relocates_a_deposit_logged_under_any_type():
+    """Classification is by Value, not by the type the record happens to carry.
+
+    Keying on COMP alone stranded every deposit logged under another type — and the
+    skill's only worked example was `--type VOUCHER`, so those records exist.
+    """
+    home = _mktemp("deposits-anytype-")
+    store = os.path.join(home, ".claude", "travel-credits")
+    os.makedirs(store)
+    with open(os.path.join(store, "inventory.md"), "w") as fh:
+        fh.write(_V1_STORE_WITH_DEPOSITS.replace(
+            "### #4 — [ECREDIT] Canceled BNA-JFK\n"
+            "- **Schema version**: 1\n"
+            "- **Value**: 347.20",
+            "### #4 — [VOUCHER] 12,000 SkyMiles goodwill\n"
+            "- **Schema version**: 1\n"
+            "- **Value**: 12,000 SkyMiles"))
+
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+    moved = {m["id"]: (m["from_type"], m["to_type"]) for m in payload["deposits_relocated"]}
+    assert moved.get(4) == ("VOUCHER", "MILES"), f"a VOUCHER-typed deposit must move: {payload}"
+    assert _json_out(run(CREDITS, ["list", "--json"], home))["count"] == 1, "only the cert stays"
 
 
 def test_migration_leaves_a_genuine_companion_certificate_in_place():

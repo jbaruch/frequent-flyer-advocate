@@ -75,8 +75,11 @@ SCHEMA_VERSION = 2
 # genuine credit out of the available set, which is a real loss of function. No
 # non-deposit value shape in the store ends in "miles" or "points": "1 certificate",
 # "2 nights", "347.20".
+# Anchored at both ends: the whole field must BE an amount of miles or points, not
+# merely contain one. Unanchored, "5000 miles voucher" and "1 certificate for 5000
+# miles travel" both matched and would have been pulled out of available inventory.
 DEPOSIT_VALUE_RE = re.compile(
-    r"\b[\d,]+\s*(?:[A-Za-z]+\s+)*[A-Za-z]*(miles|points)\b", re.IGNORECASE)
+    r"^\s*[\d,]+\s*(?:[A-Za-z]+\s+)*[A-Za-z]*(miles|points)\b[\s.,;]*$", re.IGNORECASE)
 
 VALID_TYPES = ["GUC", "RUC", "COMP", "ECREDIT", "VOUCHER", "PARTNER", "AMEX", "OTHER",
                "MILES", "POINTS"]
@@ -864,8 +867,11 @@ def relocate_deposits(content):
     kept, moving, moved = [], [], []
     for heading, body in records:
         match = re.match(r"(\s*### #(\d+)\s*[—–-]\s*)\[([A-Z]+)\](.*)", heading)
+        # Classified by Value, whatever type the record currently carries. Keying on
+        # COMP alone would have stranded every deposit logged under another type —
+        # and the skill's only worked example was `--type VOUCHER`, so those exist.
         unit = deposit_unit(body) if match else None
-        if match is None or match.group(3) != "COMP" or unit is None:
+        if match is None or unit is None or match.group(3) in DEPOSIT_TYPES:
             kept.append((heading, body))
             continue
         moved.append({"id": int(match.group(2)),
