@@ -981,7 +981,18 @@ def cmd_update(args):
     start = next(i for i, ln in enumerate(lines) if re.match(rf"### #{args.id}\s", ln.strip()))
     end = next((i for i in range(start + 1, len(lines))
                 if lines[i].strip().startswith("### #")), len(lines))
-    body = apply_complaint_updates(lines[start + 1:end], updates)
+    raw_body = lines[start + 1:end]
+
+    # The hotel schema carries Category in the heading AND as a bullet, and
+    # parse_complaints() reads the heading first, then lets the bullet overwrite it. So
+    # rebuilding only the heading leaves the stale bullet winning and the change does not
+    # stick in list/check. Update the bullet where one exists; never add one to a record
+    # that carries category in the heading alone.
+    if new_category and any(
+            re.match(r"- \*\*Category\*\*:", ln.strip()) for ln in raw_body):
+        updates["Category"] = new_category
+
+    body = apply_complaint_updates(raw_body, updates)
 
     # Rebuild the heading when the incident it names changed, so it never describes an
     # earlier version of the record. Merged onto the parsed record so untouched parts
@@ -1000,7 +1011,7 @@ def cmd_update(args):
     lines[start:end] = [heading] + body
     write_bank("\n".join(lines), store)
 
-    changed = sorted(updates) + (["Category"] if new_category else [])
+    changed = sorted(set(updates) | ({"Category"} if new_category else set()))
     if json_mode:
         emit_json({"updated": {"id": args.id, "store": store,
                                "category": merged.get("category")},

@@ -881,6 +881,23 @@ def test_bank_update_validates_the_vocabulary_per_store():
     assert payload["error"] == "invalid_category" and payload["store"] == "hotel", payload
     assert run(BANK, ["--store", "hotel", "update", "--json", "--id", "1",
                       "--category", "CLEANLINESS"], hotel).returncode == 0
+    # Assert the store, not the report. The hotel schema carries Category in the heading
+    # AND as a bullet, and parse_complaints() lets the bullet win — so rebuilding only
+    # the heading reported "Category" changed while list kept reporting the old value.
+    assert _json_out(run(BANK, ["--store", "hotel", "list", "--json"], hotel)
+                     )["complaints"][0]["category"] == "CLEANLINESS"
+
+
+def test_bank_update_does_not_add_a_category_bullet_to_an_airline_record():
+    """Airline records carry category in the heading alone; adding a bullet reshapes them."""
+    home = _filed_bank("bank-cat-airline-")
+    assert run(BANK, ["update", "--json", "--id", "1",
+                      "--category", "CANCELLATION"], home).returncode == 0
+    assert _json_out(run(BANK, ["list", "--json"], home)
+                     )["complaints"][0]["category"] == "CANCELLATION"
+    bank = os.path.join(home, ".claude", "complaint-bank", "complaints.md")
+    with open(bank) as fh:
+        assert "**Category**" not in fh.read(), "airline records keep category in the heading"
 
 
 def test_bank_update_rejects_a_bad_severity_and_writes_nothing():

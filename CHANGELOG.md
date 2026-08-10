@@ -8,6 +8,7 @@
   - Vocabulary is validated per store: the airline and hotel category sets are different, and each store rejects the other's. Severity is shared and validated against `VALID_SEVERITIES`. A rejected update leaves the bank byte-identical rather than half-applied.
   - The heading is rebuilt when the incident it names changes — category, or flight/route/date for airline, property/stay-dates for hotel — so it never describes an earlier version of the record.
   - A text-level field edit, so anything `format_complaint()` does not know survives. Values carrying a line break are refused on the same grounds as `credits-tracker.py`: the format is line-oriented, and an injected `### #` heading becomes a second complaint that `check` counts.
+  - A category change writes the hotel schema's `Category` bullet as well as the heading. The hotel record carries it in both, and `parse_complaints()` reads the heading first and then lets the bullet overwrite it — so rebuilding only the heading reported the change while `list` and `check` kept reporting the old category. An airline record carries category in the heading alone and gains no bullet.
   - `--resolution` is deliberately absent. `resolve` owns that transition, exactly as `use` owns the credits one. A resolved complaint stays editable, though — it is still live pattern data, and a wrong severity on it is still worth correcting.
 
 ## 0.9.36 — 2026-08-10
