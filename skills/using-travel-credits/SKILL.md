@@ -4,12 +4,12 @@ description: >
   How an LLM agent reads and updates the shared travel-credits inventory at
   ~/.claude/travel-credits/ — flight credits, vouchers, upgrade certificates,
   and airline or hotel compensation, tracked for a whole family across every
-  carrier and brand. Actions: check store readiness and bootstrap it; list
-  credits; show what is expiring; match credits against a booking scenario;
-  add a credit; mark one used; handle errors. Use whenever a question turns on
-  what credits, vouchers, or certificates are on hand — before searching
-  flights, when presenting an itinerary, after a booking, or when an airline
-  grants compensation.
+  carrier and brand. Actions: check store readiness and bootstrap it; migrate
+  the store to the current record shape; list credits; show what is expiring;
+  match credits against a booking scenario; add a credit; mark one used; handle
+  errors. Use whenever a question turns on what credits, vouchers, or
+  certificates are on hand — before searching flights, when presenting an
+  itinerary, after a booking, or when an airline grants compensation.
 ---
 
 # Using the Travel Credits Inventory
@@ -18,17 +18,18 @@ This skill is an action router — pick the step that matches the user's intent
 and execute only that step. Do not run other steps; do not parallelize.
 Explicit chains:
 
-- Steps 3-7 need a ready store — run Step 1 first when readiness is unknown
+- Steps 4-8 need a ready store — run Step 1 first when readiness is unknown
 - Step 1 exiting `0` continues to the step matching the user's intent
-- Step 1 exiting non-zero continues to Step 8
-- Step 8 chains back exactly once, to Step 2, and only for a missing store
-- Step 2 re-runs Step 1 once, then proceeds or continues to Step 8; it never loops
-- Any step reporting a failure continues to Step 8 (Handle Errors)
-- Every other Step 8 branch finishes without chaining
+- Step 1 exiting non-zero continues to Step 9
+- Step 9 chains back exactly once, to Step 2, and only for a missing store
+- Step 2 re-runs Step 1 once, then proceeds or continues to Step 9; it never loops
+- Any step reporting a failure continues to Step 9 (Handle Errors)
+- Every other Step 9 branch finishes without chaining
 
 This skill is the owner of the inventory artifact. Shape changes to the store
-belong to it and to no other skill. The record shape, the writer/reader
-contract, and the migration policy are documented beside it:
+belong to it and to no other skill, and Step 3 is the only place a migration
+runs. The record shape, the writer/reader contract, and the migration policy
+are documented beside it:
 
 ```text
 skills/using-travel-credits/state-schema.md
@@ -63,12 +64,12 @@ python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-adv
 Branch on the exit code, never on the printed wording:
 
 - `0` — proceed to the step matching the user's intent
-- `3` — no store. Continue to Step 8, then return here
-- `4` — store unusable. Continue to Step 8; do not bootstrap over it
+- `3` — no store. Continue to Step 9, then return here
+- `4` — store unusable. Continue to Step 9; do not bootstrap over it
 
 ## Step 2 — Bootstrap the Store
 
-Reached from Step 8 after an exit `3`, with the user's choice already made.
+Reached from Step 9 after an exit `3`, with the user's choice already made.
 Never pick the choice for them.
 
 ```bash
@@ -80,10 +81,30 @@ python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-adv
 creates one elsewhere and symlinks it back.
 
 Re-run Step 1 once. Exit `0` proceeds to the step matching the user's intent.
-Anything else continues to Step 8 and does not return — a bootstrap that did not
+Anything else continues to Step 9 and does not return — a bootstrap that did not
 take is reported, never retried.
 
-## Step 3 — List Credits
+## Step 3 — Migrate the Store
+
+```bash
+python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py migrate --json
+```
+
+This skill owns the record shape, so this is the only step that changes it.
+Other skills write to this store through the same script, and their writes
+deliberately leave records they did not author untouched — a non-owner must not
+migrate. Records written before versioning, or at an older version, stay as they
+are until this runs.
+
+Run it after adopting a store with `link`, and whenever a read reports records
+this script would not consume. It is idempotent: a store already current reports
+`changed: false` and is not rewritten.
+
+`skipped_newer` above zero means records were written by a newer version of this
+plugin than the one installed. Those are left alone by design — report the count
+and say the plugin needs updating to read them. Finish here.
+
+## Step 4 — List Credits
 
 ```bash
 python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py list --json
@@ -94,7 +115,7 @@ Report the `credits` entries as given, and say which filters were applied — th
 payload echoes them, so a narrowed list is never presented as the whole store.
 Finish here.
 
-## Step 4 — Show What Is Expiring
+## Step 5 — Show What Is Expiring
 
 ```bash
 python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py expiring --json
@@ -107,7 +128,7 @@ Run without a passenger filter before a flight search. Surface each `expiring`
 entry with its deadline. The `no_expiry` entries are a separate list and are not
 a deadline — never fold them into the urgent set. Finish here.
 
-## Step 5 — Match Credits to a Booking Scenario
+## Step 6 — Match Credits to a Booking Scenario
 
 ```bash
 python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py check --json --scenario "<itinerary description>" --passengers "Name One,Name Two"
@@ -122,7 +143,7 @@ match's `reasons` rather than re-deriving them. `other_passenger_matches` holds
 credits belonging to family members not on the trip — present it as its own
 callout, never merged into `matches`. Finish here.
 
-## Step 6 — Add a Credit
+## Step 7 — Add a Credit
 
 `--type`, `--description`, and `--value` are the required flags:
 
@@ -137,16 +158,16 @@ goodwill deposit has no expiry.
 
 `--airline` and `--brand` are independent dimensions, not alternatives. A
 co-branded credit carries both, and each matches its own scenario type in
-Step 5.
+Step 6.
 
 Confirm the type against `--help` before writing. The type is recorded verbatim
-and drives Step 5's matching; never infer one from an abbreviation's plain
+and drives Step 6's matching; never infer one from an abbreviation's plain
 reading.
 
 An airline's offer is not a credit until it exists. Add it when the user
 confirms they hold it, never from an alert or a promise. Finish here.
 
-## Step 7 — Mark a Credit Used
+## Step 8 — Mark a Credit Used
 
 ```bash
 python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py use --json --id <N> --note "<what it was applied to>"
@@ -160,7 +181,7 @@ There is no reverse subcommand. Confirm with the user that the credit was
 actually applied before writing; a wrong `use` is undone by hand-editing the
 store, which this skill forbids. Finish here.
 
-## Step 8 — Handle Errors
+## Step 9 — Handle Errors
 
 - Exit `3`, no store at the path. Ask the user which bootstrap they want, then
   continue to Step 2 to run it. Never create one unasked: a store may exist
@@ -169,9 +190,11 @@ store, which this skill forbids. Finish here.
   whose target is not mounted. A dangling symlink is never recreated
   automatically. Report it and stop — remounting or re-linking the real store
   is the user's action, not this skill's.
-- Unknown `--id` on Step 7. Re-run Step 3 for a current id. Ids belong to the
+- Records omitted as newer than this script. Report that the plugin is behind
+  the store and stop. Step 3 does not fix this; it leaves those records alone.
+- Unknown `--id` on Step 8. Re-run Step 4 for a current id. Ids belong to the
   store and are not stable once a record is archived.
-- Rejected `--type` on Step 6. Read `--help` for the accepted set. Never guess
+- Rejected `--type` on Step 7. Read `--help` for the accepted set. Never guess
   from an abbreviation's plain-English reading.
 
 Report the reason in one line. Every branch except exit `3` finishes here.

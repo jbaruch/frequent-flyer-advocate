@@ -632,7 +632,14 @@ def stamp_schema_version(content):
     A text-level edit rather than a parse/reformat round-trip: reformatting the
     whole store would drop any field the current formatter does not know and
     rewrite untouched records, so a migration would risk more than it fixes.
+
+    Reached only from cmd_migrate(). Migration is the owner skill's operation and
+    no other write path may perform it — see write_inventory().
+
+    Returns (migrated_text, stats).
     """
+    stats = {"stamped": 0, "upgraded": 0, "already_current": 0,
+             "skipped_newer": 0, "unreadable": 0}
     lines = content.split("\n")
     out = []
     for i, line in enumerate(lines):
@@ -641,11 +648,17 @@ def stamp_schema_version(content):
             try:
                 version = int(stored)
             except ValueError:
+                stats["unreadable"] += 1
                 out.append(line)  # unreadable; parse_credits reports and skips it
                 continue
             if version > SCHEMA_VERSION:
+                stats["skipped_newer"] += 1
                 out.append(line)
                 continue
+            if version == SCHEMA_VERSION:
+                stats["already_current"] += 1
+            else:
+                stats["upgraded"] += 1
             while version < SCHEMA_VERSION:
                 upgrade_record_body([], version)
                 version += 1
@@ -656,15 +669,28 @@ def stamp_schema_version(content):
         if line.startswith("### #"):
             following = lines[i + 1] if i + 1 < len(lines) else ""
             if not following.startswith(VERSION_LINE_PREFIX):
+                stats["stamped"] += 1
                 out.append(f"{VERSION_LINE_PREFIX} {SCHEMA_VERSION}")
-    return "\n".join(out)
+    return "\n".join(out), stats
 
 
 def write_inventory(content):
+    """Persist the store verbatim.
+
+    Deliberately does NOT migrate. Every skill that logs compensation reaches
+    this script directly, so a migration here would run under a non-owner
+    writer — which stateful-artifacts Migration Policy reserves to the owner
+    skill. Records this writer did not touch keep whatever version they carry;
+    the next `migrate` run by skills/using-travel-credits upgrades them.
+
+    A record this call is itself writing is stamped by format_credit(), which
+    is the writer emitting its own record in the current shape, not a migration
+    of somebody else's.
+    """
     require_initialized()
     ensure_inventory()
     with open(INVENTORY_PATH, "w") as f:
-        f.write(stamp_schema_version(content))
+        f.write(content)
 
 
 def is_readable_version(credit):
@@ -1011,6 +1037,39 @@ def cmd_use(args):
     print(f"✅ Marked credit #{args.id} as used: [{credit['type']}] {credit['description']}")
     if args.note:
         print(f"   Note: {args.note}")
+
+
+def cmd_migrate(args):
+    """Bring every record in the store up to SCHEMA_VERSION.
+
+    The owner skill's operation. stateful-artifacts Migration Policy reserves
+    migration to the owner (skills/using-travel-credits); no other write path
+    in this script stamps or upgrades a record it did not itself author, so a
+    store written by a non-owner is upgraded the next time this runs.
+
+    Idempotent — a store already at SCHEMA_VERSION is left byte-identical and
+    reports changed: false.
+    """
+    content = read_inventory()
+    migrated, stats = stamp_schema_version(content)
+    changed = migrated != content
+    if changed:
+        write_inventory(migrated)
+
+    if args.json:
+        emit_json({"schema_version": SCHEMA_VERSION, "changed": changed, **stats})
+        return
+
+    if not changed:
+        print(f"✅ Every record already at schema version {SCHEMA_VERSION} — nothing to migrate.")
+    else:
+        print(f"✅ Migrated the store to schema version {SCHEMA_VERSION}.")
+        print(f"   Stamped (no prior version): {stats['stamped']}")
+        print(f"   Upgraded from an older version: {stats['upgraded']}")
+    if stats["skipped_newer"]:
+        print(f"   ⚠️  Left untouched, newer than this script: {stats['skipped_newer']}")
+    if stats["unreadable"]:
+        print(f"   ⚠️  Unreadable version line: {stats['unreadable']}")
 
 
 def cmd_expiring(args):
@@ -1437,6 +1496,9 @@ Examples:
     # status
     sub.add_parser("status", help="Report store readiness: ready (0) / missing (3) / invalid (4)", parents=[common])
 
+    # migrate — owner-skill operation, see cmd_migrate()
+    sub.add_parser("migrate", help="Bring every record up to the current schema version (owner skill only)", parents=[common])
+
     # Read before parsing: an argparse failure exits before args exist, and that
     # exit still has to honour the JSON contract.
     json_mode = "--json" in sys.argv
@@ -1457,6 +1519,7 @@ Examples:
             "init": cmd_init,
             "link": cmd_link,
             "status": cmd_status,
+            "migrate": cmd_migrate,
         }[args.command](args)
     except SystemExit as exc:
         # Any exit that skipped emit_json still owes the caller an object: under

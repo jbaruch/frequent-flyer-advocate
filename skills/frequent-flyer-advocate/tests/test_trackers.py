@@ -875,28 +875,82 @@ def test_added_credit_carries_schema_version():
     assert "- **Schema version**: 1" in text, f"no schema version stamped:\n{text}"
 
 
-def test_unversioned_record_is_stamped_on_rewrite():
-    """A pre-versioning record reads as v1 and is stamped when the store is rewritten."""
-    home = _mktemp("schemaver-migrate-")
+def _strip_versions(inventory):
+    """Simulate records written before versioning existed."""
+    with open(inventory) as fh:
+        text = fh.read()
+    stripped = "\n".join(l for l in text.split("\n") if "**Schema version**" not in l)
+    with open(inventory, "w") as fh:
+        fh.write(stripped)
+    assert "**Schema version**" not in stripped
+    return stripped
+
+
+def test_a_non_owner_write_does_not_migrate_other_records():
+    """stateful-artifacts reserves migration to the owner skill.
+
+    Every skill that logs compensation calls this script directly, so `add` runs
+    under a non-owner writer. It stamps the record it is itself writing and
+    leaves everyone else's alone — the store is upgraded by `migrate`, not as a
+    side effect of somebody logging a voucher.
+    """
+    home = _mktemp("schemaver-nonowner-")
     run(CREDITS, ["init", "--default"], home)
     run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Legacy credit",
                   "--value", "50.00", "--airline", "AA"], home)
 
     inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
-    with open(inventory) as fh:
-        text = fh.read()
-    # Strip the version line to simulate a record written before versioning.
-    stripped = "\n".join(l for l in text.split("\n") if "**Schema version**" not in l)
-    with open(inventory, "w") as fh:
-        fh.write(stripped)
-    assert "**Schema version**" not in stripped
+    _strip_versions(inventory)
 
-    # Any write rewrites the store; the legacy record comes back stamped.
     assert run(CREDITS, ["add", "--type", "VOUCHER", "--desc", "Second credit",
                          "--value", "25.00", "--airline", "AA"], home).returncode == 0
     with open(inventory) as fh:
         after = fh.read()
-    assert after.count("- **Schema version**: 1") == 2, f"legacy record not stamped:\n{after}"
+    assert after.count("- **Schema version**: 1") == 1, (
+        f"a non-owner write must stamp only its own record:\n{after}")
+    assert "Legacy credit" in after, "the untouched record must survive verbatim"
+
+
+def test_migrate_stamps_records_written_before_versioning():
+    """The owner's migrate run is what brings a pre-versioning store up to date."""
+    home = _mktemp("schemaver-migrate-")
+    run(CREDITS, ["init", "--default"], home)
+    for desc in ("Legacy one", "Legacy two"):
+        run(CREDITS, ["add", "--type", "ECREDIT", "--desc", desc,
+                      "--value", "50.00", "--airline", "AA"], home)
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    _strip_versions(inventory)
+
+    r = run(CREDITS, ["migrate", "--json"], home)
+    assert r.returncode == 0, f"{r.stdout}{r.stderr}"
+    payload = _json_out(r)
+    assert payload["changed"] is True
+    assert payload["stamped"] == 2, payload
+
+    with open(inventory) as fh:
+        after = fh.read()
+    assert after.count("- **Schema version**: 1") == 2, f"not stamped:\n{after}"
+    assert "Legacy one" in after and "Legacy two" in after
+
+
+def test_migrate_is_idempotent():
+    """A store already current is left byte-identical and reports no change."""
+    home = _mktemp("schemaver-idem-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Current credit",
+                  "--value", "50.00", "--airline", "AA"], home)
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        before = fh.read()
+
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+    assert payload["changed"] is False, payload
+    assert payload["stamped"] == 0 and payload["upgraded"] == 0, payload
+
+    with open(inventory) as fh:
+        assert fh.read() == before, "an idempotent migrate must not rewrite the store"
 
 
 def test_newer_schema_version_is_skipped_and_its_id_reserved():
@@ -925,8 +979,8 @@ def test_newer_schema_version_is_skipped_and_its_id_reserved():
         f"id must not be reused over an unreadable record:\n{added.stdout}")
 
 
-def test_older_explicit_version_is_upgraded_on_write():
-    """An explicitly older record is migrated up to SCHEMA_VERSION, not left stale."""
+def test_migrate_upgrades_an_explicitly_older_version():
+    """An explicitly older record is stepped up to SCHEMA_VERSION, not left stale."""
     home = _mktemp("schemaver-older-")
     run(CREDITS, ["init", "--default"], home)
     run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Old-shape credit",
@@ -938,17 +992,16 @@ def test_older_explicit_version_is_upgraded_on_write():
     with open(inventory, "w") as fh:
         fh.write(text.replace("- **Schema version**: 1", "- **Schema version**: 0"))
 
-    # Any write migrates the store; the stale record comes back at the current version.
-    assert run(CREDITS, ["add", "--type", "VOUCHER", "--desc", "Current credit",
-                         "--value", "5.00", "--airline", "AA"], home).returncode == 0
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+    assert payload["upgraded"] == 1, payload
+
     with open(inventory) as fh:
         after = fh.read()
     assert "- **Schema version**: 0" not in after, f"stale version survived:\n{after}"
-    assert after.count("- **Schema version**: 1") == 2, f"not upgraded:\n{after}"
     assert "Old-shape credit" in run(CREDITS, ["list"], home).stdout
 
 
-def test_newer_version_is_not_rewritten_down():
+def test_migrate_does_not_rewrite_a_newer_record_down():
     """An owner that cannot read a record must not rewrite its version either."""
     home = _mktemp("schemaver-preserve-")
     run(CREDITS, ["init", "--default"], home)
@@ -961,11 +1014,18 @@ def test_newer_version_is_not_rewritten_down():
     with open(inventory, "w") as fh:
         fh.write(text.replace("- **Schema version**: 1", "- **Schema version**: 99"))
 
-    run(CREDITS, ["add", "--type", "VOUCHER", "--desc", "Current credit",
-                  "--value", "5.00", "--airline", "AA"], home)
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+    assert payload["skipped_newer"] == 1, payload
+
     with open(inventory) as fh:
         after = fh.read()
     assert "- **Schema version**: 99" in after, f"newer record was downgraded:\n{after}"
+
+    # And a plain non-owner write leaves it alone too.
+    run(CREDITS, ["add", "--type", "VOUCHER", "--desc", "Current credit",
+                  "--value", "5.00", "--airline", "AA"], home)
+    with open(inventory) as fh:
+        assert "- **Schema version**: 99" in fh.read()
 
 
 # ── using-travel-credits router contract ──────────────────────────────────────

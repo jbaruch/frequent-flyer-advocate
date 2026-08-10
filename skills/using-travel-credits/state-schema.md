@@ -57,9 +57,11 @@ The heading and `Schema version` are always written. Every other field is writte
 
 | Skill | Role | Operations |
 |---|---|---|
-| `using-travel-credits` | owner, writer, reader | `status`, `link`, `init`, `list`, `expiring`, `check`, `add`, `use` |
+| `using-travel-credits` | owner, writer, reader | `status`, `link`, `init`, `migrate`, `list`, `expiring`, `check`, `add`, `use` |
 | `frequent-flyer-advocate` | writer, reader | logs granted compensation; reads the archive for prior-compensation history |
 | `jbaruch/jbaruch-travel-policy` | reader, writer | reads before a search and when presenting an itinerary; marks credits used after a booking |
+
+`migrate` is the owner's alone. No other skill in this table may run it, and no other write path performs one.
 
 Every writer promises: writes go through `credits-tracker.py`, never a hand edit. Readers promise: absent fields are absent, not empty — a missing `Expiry` means no expiry, never an expired credit.
 
@@ -79,13 +81,19 @@ Every writer promises: writes go through `credits-tracker.py`, never a hand edit
 
 Current version: **1**, the `SCHEMA_VERSION` constant in `credits-tracker.py`.
 
-Every write stamps every record, including records already in the store that predate versioning — `write_inventory()` routes through `stamp_schema_version()`, which inserts the line after any `### #` heading that lacks one. A record with no version line reads as version 1.
+A writer stamps the record it is itself writing — `format_credit()` emits the current version on every record it formats. It does **not** stamp records it did not author. A record with no version line reads as version 1.
 
 The stamp is a text-level insert, not a parse-and-reformat of the whole store. Reformatting would drop any field the current formatter does not know and rewrite records nobody touched, so the migration would risk more than it repairs.
 
 ## Migration policy
 
-Only this skill migrates, and it migrates on write. `stamp_schema_version()` walks every record:
+Only this skill migrates, and it migrates through one explicit operation: the `migrate` subcommand, reached from Step 3.
+
+`write_inventory()` deliberately does not migrate. Every skill in the writer table below calls `credits-tracker.py` directly, so a migration on the write path would run under a non-owner writer — which `stateful-artifacts` Migration Policy reserves to the owner. A non-owner's `add` or `use` therefore leaves everyone else's records at whatever version they carry; the next `migrate` upgrades them.
+
+`migrate` is idempotent: a store already current is left byte-identical and reports `changed: false`.
+
+`stamp_schema_version()` walks every record:
 
 | Stored version | Action |
 |---|---|
