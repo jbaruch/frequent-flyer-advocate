@@ -336,17 +336,24 @@ Presenting requires **both** exit 0 and an empty `formatting_warnings` array.
 - **Exit 2** — fix what the stderr message names, then rerun. Never fall back to counting
   by hand.
 
-When the user reports what the live form's counter actually said, that number is new
-evidence. Do not edit the metadata inside the installed plugin — `tessl install` overwrites
-it and the observation is lost. Instead:
+Two different numbers can come back from a live form. Keep them apart:
 
-- **This session** — rerun with `--limit <N>` set to the number the form reported.
+- The **limit** is the form's maximum. `--limit <N>` takes this and nothing else.
+- The **counter reading** is what the form measured *this draft* at. It is calibration
+  evidence for the counting method, never a limit. Passing it to `--limit` would raise the
+  ceiling by exactly the amount the draft overran and turn a real overflow into a pass.
+
+Neither belongs in the installed plugin's metadata — `tessl install` overwrites it and the
+observation is lost. Route them instead:
+
+- **This session** — the user reports the form's maximum: rerun with `--limit <max>`.
 - **This machine, durably** — copy `<this-skill-dir>/scripts/airline-form-metadata.json`
-  somewhere the user owns, add the verified `char_limit` / `counting_method` there, and pass
+  somewhere the user owns, record the verified `char_limit` there, and pass
   `--metadata <their-copy>` on later runs.
-- **Everyone** — tell the user the observation is worth upstreaming to
-  `jbaruch/frequent-flyer-advocate`, and give them the airline code, channel, the count the
-  script reported, and the count the form reported.
+- **Everyone** — tell the user both numbers are worth upstreaming to
+  `jbaruch/frequent-flyer-advocate`: the airline code, the channel, the form's stated
+  maximum, the count the script reported, and the count the form reported. That last pair
+  is what identifies the counting method and retires the inflation margin.
 
 Proceed immediately to Step 10.
 

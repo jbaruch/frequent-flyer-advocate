@@ -140,13 +140,36 @@ def die(message) -> NoReturn:
     sys.exit(2)
 
 
-def load_metadata(path):
+def read_text_file(path, what, missing_hint):
+    """Read a UTF-8 text file, routing every expected I/O failure through die().
+
+    Exit 2 is a documented part of this script's interface, so a directory, a permission
+    denial, or non-UTF-8 bytes has to reach the caller as an actionable diagnostic rather
+    than a traceback. Subclasses of OSError are caught before the OSError catch-all.
+    """
     try:
         with open(path, encoding="utf-8") as f:
-            return json.load(f)
+            return f.read()
     except FileNotFoundError:
-        die(f"metadata file missing at {path}. It ships beside this script — restore it "
-            f"from the plugin (tessl install jbaruch/frequent-flyer-advocate).")
+        die(f"{what} not found: {path}. {missing_hint}")
+    except IsADirectoryError:
+        die(f"{what} path is a directory, not a file: {path}")
+    except PermissionError:
+        die(f"cannot read {what} at {path}: permission denied. "
+            f"Grant read access (chmod +r {path}) and rerun.")
+    except UnicodeDecodeError:
+        die(f"{what} at {path} is not valid UTF-8. Re-save it as UTF-8 and rerun.")
+    except OSError as e:
+        die(f"cannot read {what} at {path}: {e.strerror or e}.")
+
+
+def load_metadata(path):
+    raw = read_text_file(
+        path, "metadata file",
+        "It ships beside this script — restore it from the plugin "
+        "(tessl install jbaruch/frequent-flyer-advocate), or point --metadata at your copy.")
+    try:
+        return json.loads(raw)
     except json.JSONDecodeError as e:
         die(f"{path} is not valid JSON ({e}). Fix the file before rerunning.")
 
@@ -155,16 +178,17 @@ def read_letter(args):
     if args.file and args.stdin:
         die("pass --file or --stdin, not both.")
     if args.file:
-        try:
-            with open(args.file, encoding="utf-8") as f:
-                text = f.read()
-        except FileNotFoundError:
-            die(f"letter file not found: {args.file}. Write the draft to a file first, "
-                f"or pipe it in with --stdin.")
-        except IsADirectoryError:
-            die(f"--file expects a file, got a directory: {args.file}")
+        text = read_text_file(
+            args.file, "letter file",
+            "Write the draft to a file first, or pipe it in with --stdin.")
     elif args.stdin:
-        text = sys.stdin.read()
+        try:
+            text = sys.stdin.read()
+        except UnicodeDecodeError:
+            die("the text piped in on stdin is not valid UTF-8. Re-encode it as UTF-8 "
+                "and rerun.")
+        except OSError as e:
+            die(f"cannot read the letter from stdin: {e.strerror or e}.")
     else:
         die("no letter supplied. Pass --file <path> or --stdin (or use --info / "
             "--list-airlines, which need no letter).")

@@ -302,6 +302,53 @@ def test_unconfigured_channel_is_rejected():
     assert "web_form" in r.stderr, f"the error must list what is configured:\n{r.stderr}"
 
 
+def test_metadata_io_failures_are_actionable_not_tracebacks():
+    # Exit 2 is part of the documented interface, so every expected read failure has to
+    # arrive as a diagnostic rather than a stack trace.
+    d = _mktemp("ffa-metaio-")
+    cases = [
+        (d, "directory"),                                   # --metadata pointed at a dir
+        (os.path.join(d, "gone.json"), "not found"),        # missing file
+    ]
+    bad_utf8 = os.path.join(d, "bad-utf8.json")
+    with open(bad_utf8, "wb") as f:
+        f.write(b'{"airlines": {"ZZ": {"name": "\xff\xfe"}}}')
+    cases.append((bad_utf8, "UTF-8"))
+
+    for path, expected in cases:
+        r = run(["--airline", "AA", "--metadata", path, "--file", write_letter(PLAIN_LETTER)])
+        assert r.returncode == ARG_ERROR, f"{path}: expected exit 2, got {r.returncode}"
+        assert "Traceback" not in r.stderr, f"{path} leaked a traceback:\n{r.stderr}"
+        assert expected.lower() in r.stderr.lower(), f"{path}: {r.stderr}"
+
+
+def test_letter_io_failures_are_actionable_not_tracebacks():
+    d = _mktemp("ffa-letterio-")
+    bad_utf8 = os.path.join(d, "bad-utf8.txt")
+    with open(bad_utf8, "wb") as f:
+        f.write(b"As an AAdvantage member \xff\xfe and then some")
+    for path, expected in ((d, "directory"), (bad_utf8, "UTF-8")):
+        r = run(["--airline", "AA", "--file", path])
+        assert r.returncode == ARG_ERROR, f"{path}: expected exit 2, got {r.returncode}"
+        assert "Traceback" not in r.stderr, f"{path} leaked a traceback:\n{r.stderr}"
+        assert expected.lower() in r.stderr.lower(), f"{path}: {r.stderr}"
+
+
+def test_unreadable_file_permissions_are_actionable():
+    # Root bypasses the permission bit, so the assertion would be vacuous there.
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return
+    path = write_letter(PLAIN_LETTER, name="locked.txt")
+    os.chmod(path, 0o000)
+    try:
+        r = run(["--airline", "AA", "--file", path])
+        assert r.returncode == ARG_ERROR, f"expected exit 2, got {r.returncode}"
+        assert "Traceback" not in r.stderr, r.stderr
+        assert "permission" in r.stderr.lower(), r.stderr
+    finally:
+        os.chmod(path, 0o600)  # let the atexit cleanup remove it
+
+
 def test_unreadable_metadata_is_rejected():
     path = os.path.join(_mktemp("ffa-badmeta-"), "airline-form-metadata.json")
     with open(path, "w", encoding="utf-8") as f:
