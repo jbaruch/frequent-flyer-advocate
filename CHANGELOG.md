@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.9.38 — 2026-08-10
+
 ### Changed
 
 - `frequent-flyer-advocate/SKILL.md` drops from ~6,083 tokens to ~4,791, under the 5,000 `tessl plugin lint` recommends. Resolves #38.
