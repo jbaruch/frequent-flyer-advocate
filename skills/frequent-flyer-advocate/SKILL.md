@@ -114,8 +114,7 @@ long questionnaire. Listen, then ask targeted follow-ups based on what's missing
 - **Desired outcome** — if not already stated, ask what they want (miles, voucher, refund,
   apology, or your recommendation). This shapes the remedy section — do not skip it.
 - **Submission channel** — how they will send it: web form, email, paper mail, or undecided.
-  This changes what the letter must contain and how long it may be, so ask it here rather
-  than after a draft exists.
+  Ask before drafting, never after.
 
 ### If the channel is a web form
 
@@ -315,8 +314,13 @@ a **web form**, build a second, shorter variant instead:
 - Write plain prose. Markdown bold, headings, bullets, blockquotes, and links may render as
   literal punctuation in a plain-text field.
 
-For an email or paper-mail letter there is nothing to measure — skip to Step 10. Otherwise
-proceed immediately to Step 9.
+Route on the channel Step 3 recorded:
+
+- **Web form** — proceed immediately to Step 9.
+- **Email or paper mail** — nothing to measure. Skip to Step 10.
+- **Undecided** — ask the user to choose now; the variant and the length budget both depend
+  on it. If they still decline to choose, build the long form, tell them a web form needs a
+  fitted variant, and skip to Step 10.
 
 ---
 
@@ -349,8 +353,7 @@ Two different numbers can come back from a live form. Keep them apart:
 
 - The **limit** is the form's maximum. `--limit <N>` takes this and nothing else.
 - The **counter reading** is what the form measured *this draft* at. It is calibration
-  evidence for the counting method, never a limit. Passing it to `--limit` would raise the
-  ceiling by exactly the amount the draft overran and turn a real overflow into a pass.
+  evidence for the counting method. Never pass it to `--limit`.
 
 Neither belongs in the installed plugin's metadata — `tessl install` overwrites it and the
 observation is lost. Route them instead:
