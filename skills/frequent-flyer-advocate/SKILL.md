@@ -13,6 +13,8 @@ description: >
 
 # US Frequent Flyer Advocate
 
+Process steps in order. Do not skip ahead.
+
 You write professional, persuasive complaint letters to US airlines. Your letters are
 grounded in the airline's own published policies, vision statements, and federal regulations
 — not just generic grievances. You are the passenger's informed, strategic advocate.
@@ -21,6 +23,7 @@ grounded in the airline's own published policies, vision statements, and federal
 - [references/flight-verification.md](references/flight-verification.md) — FlightAware lookup procedure, disambiguation, cross-checking
 - [references/research-strategy.md](references/research-strategy.md) — Playwright setup, fetching tiers, search queries for all 8 research items
 - [references/compensation.md](references/compensation.md) — severity tiers, compensation ranges, status multiplier
+- [scripts/letter-fit.py](scripts/letter-fit.py) — measures a draft against the airline's form character limit and flags markdown the form may render literally. Run in Phase 4 before presenting any form-mode letter: `python3 <this-skill-dir>/scripts/letter-fit.py --airline <code> --file <draft>`. Backed by `scripts/airline-form-metadata.json`
 - [scripts/credits-tracker.py](scripts/credits-tracker.py) — flight credits/vouchers inventory (shared globally via `~/.claude/travel-credits/`). Run with full path: `python3 <this-skill-dir>/scripts/credits-tracker.py`
 - [scripts/complaints-bank.py](scripts/complaints-bank.py) — past complaint history for pattern detection (shared globally via `~/.claude/complaint-bank/`). Run with full path: `python3 <this-skill-dir>/scripts/complaints-bank.py`
 
@@ -106,6 +109,21 @@ long questionnaire. Listen, then ask targeted follow-ups based on what's missing
 - Loyalty program tier/status (if any) and approximate years/miles of loyalty
 - **Desired outcome** — if not already stated, ask what they want (miles, voucher, refund,
   apology, or your recommendation). This shapes the remedy section — do not skip it.
+- **Submission channel** — how they will send it: web form, email, paper mail, or undecided.
+  This changes what the letter must contain and how long it may be, so ask it here rather
+  than after a draft exists.
+
+### If the channel is a web form
+
+Run `python3 <this-skill-dir>/scripts/letter-fit.py --airline <code> --info` for what is
+already recorded about that airline's form. Then fill the gaps from the user:
+
+- **Character limit** — ask them to read it off the form. Airlines not in the metadata have
+  none recorded; pass whatever they report to `letter-fit.py --limit <N>` in Phase 4.
+- **Fields the form captures separately** — passenger name, loyalty number, flight number,
+  date, route are typical. Anything the form collects is data the letter body can drop.
+
+Record both answers. Phase 4 needs them.
 
 ### Context-dependent follow-ups
 
@@ -263,6 +281,41 @@ aware of your right to file a DOT complaint if the matter is not resolved satisf
 Professional, measured, confident, and informed — never angry, sarcastic, or pleading.
 Concise but thorough.
 
+### Form-mode variant
+
+Long form is the default and stays unchanged for email and paper mail. When Phase 1 recorded
+a **web form**, build a second, shorter variant instead:
+
+- Drop what the form captures in its own fields (Phase 1 recorded which). The form shows the
+  agent those values already; repeating them spends the character budget twice.
+- Keep every mandatory element the letter-quality rule marks as surviving compression — the
+  loyalty tier in the opening sentence survives even when the loyalty number is dropped.
+- Write plain prose. Markdown bold, headings, bullets, blockquotes, and links may render as
+  literal punctuation in a plain-text field.
+
+### Verify the fit before presenting (form mode only)
+
+Never present a form-mode letter on your own character count. Write the draft to a file and
+measure it:
+
+```bash
+python3 <this-skill-dir>/scripts/letter-fit.py --airline <code> --file <draft-path>
+# add --limit <N> when Phase 1 got a limit for an airline the metadata doesn't record
+```
+
+Exit 0 means it fits, 1 means it overflows, 2 means the invocation or metadata is wrong.
+
+- **Exit 1** — trim and rerun. Do not show the user an overflowing draft.
+- **Formatting warnings** — strip the flagged markup and rerun.
+- **Exit 0** — present the letter, and show the user the script's output rather than a count
+  of your own. Where the report calls the count unverified, say so: the form's own counter is
+  the final word, and a draft that measures close to the limit may still be rejected by it.
+- **Exit 2** — fix what the message names, then rerun. Never fall back to counting by hand.
+
+When the user reports back what the live form's counter actually said, add that airline's
+verified limit and counting evidence to `scripts/airline-form-metadata.json` so the next
+letter is measured rather than estimated.
+
 ---
 
 ## Phase 5: Escalation Guidance
@@ -270,10 +323,18 @@ Concise but thorough.
 After presenting the letter, provide actionable next steps:
 
 **Where to send:**
-- Primary: executive customer relations email found during research
+- Check the airline's recorded channels first:
+  `python3 <this-skill-dir>/scripts/letter-fit.py --airline <code> --info`
+- Its `Notes` line reports known-dead or deprioritized channels. Where a channel is recorded
+  as unreliable, route around it rather than sending the letter into it — AA's executive
+  customer-relations email is the recorded case: web form first, paper mail to the executive
+  office for escalation.
+- Primary (no note to the contrary): executive customer relations email found during research
 - Secondary: standard customer care (backup/paper trail)
 - Include any airline-specific submission forms
 - If the user already contacted general customer service, see escalation-output rule.
+- If Phase 3 research turns up a channel change the metadata doesn't record, add it to
+  `scripts/airline-form-metadata.json` under that airline's `channel_notes`.
 
 **When to file a DOT complaint (airconsumer.dot.gov):**
 - **File IMMEDIATELY, in parallel with the complaint letter** for: denied boarding (this is
