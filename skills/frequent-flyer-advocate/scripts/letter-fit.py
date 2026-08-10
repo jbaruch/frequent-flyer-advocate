@@ -14,12 +14,19 @@ Usage:
   letter-fit.py --airline AA --info                           # channels + notes, no letter
   letter-fit.py --list-airlines
 
-Output: a JSON object on stdout in every mode, diagnostics on stderr. The caller renders it
-for the user — the script measures and never writes prose (rules/script-delegation.md).
+Output: one JSON object on stdout, success or failure, diagnostics on stderr. The caller
+renders it for the user — the script measures and never writes prose
+(rules/script-delegation.md). `--help` is the sole exception: it prints usage and exits 0.
 
 A fit check reports every count, the figure the verdict was judged at, whether that figure is
 verified, the headroom, the status, formatting warnings, and the fields the form captures on
 its own. `worst_count` and `effective_count` are precomputed so no caller does the arithmetic.
+
+A failure reports {"error": <code>, "message": <text>}, plus whatever context the code
+carries (`path`, `known`, `given`, `usage`). Codes: bad_arguments, input_not_found,
+input_not_a_file, input_unreadable, input_not_utf8, empty_letter, metadata_missing,
+metadata_invalid_json, unknown_airline, unknown_channel. Branch on `error` being present,
+never on stderr text.
 
 Data lives in airline-form-metadata.json beside this script; --metadata points at another
 copy. Only verified limits belong in it — pass --limit for a form nobody has recorded yet.
@@ -134,10 +141,24 @@ FORMAT_CHECKS = (
 )
 
 
-def die(message) -> NoReturn:
-    """Exit 2 with an actionable diagnostic on stderr."""
+def die(code, message, **fields) -> NoReturn:
+    """Emit a structured failure on stdout, an actionable diagnostic on stderr, exit 2.
+
+    stdout carries a JSON object on every run that measures or fails, so a caller parsing
+    the documented interface handles failures the same way it handles verdicts. The prose
+    on stderr is for the human reading the terminal, and mirrors the `message` field.
+    """
+    emit({"error": code, "message": message, **fields})
     print(f"ERROR: {message}", file=sys.stderr)
     sys.exit(2)
+
+
+class JsonArgumentParser(argparse.ArgumentParser):
+    """argparse exits 2 with bare usage text on a bad flag, which would be the one hole
+    left in the stdout contract. Route it through die() like every other failure."""
+
+    def error(self, message) -> NoReturn:
+        die("bad_arguments", message, usage=self.format_usage().strip())
 
 
 def read_text_file(path, what, missing_hint):
@@ -151,16 +172,19 @@ def read_text_file(path, what, missing_hint):
         with open(path, encoding="utf-8") as f:
             return f.read()
     except FileNotFoundError:
-        die(f"{what} not found: {path}. {missing_hint}")
+        die("input_not_found", f"{what} not found: {path}. {missing_hint}", path=path)
     except IsADirectoryError:
-        die(f"{what} path is a directory, not a file: {path}")
+        die("input_not_a_file", f"{what} path is a directory, not a file: {path}", path=path)
     except PermissionError:
-        die(f"cannot read {what} at {path}: permission denied. "
-            f"Grant read access (chmod +r {path}) and rerun.")
+        die("input_unreadable",
+            f"cannot read {what} at {path}: permission denied. "
+            f"Grant read access (chmod +r {path}) and rerun.", path=path)
     except UnicodeDecodeError:
-        die(f"{what} at {path} is not valid UTF-8. Re-save it as UTF-8 and rerun.")
+        die("input_not_utf8",
+            f"{what} at {path} is not valid UTF-8. Re-save it as UTF-8 and rerun.",
+            path=path)
     except OSError as e:
-        die(f"cannot read {what} at {path}: {e.strerror or e}.")
+        die("input_unreadable", f"cannot read {what} at {path}: {e.strerror or e}.", path=path)
 
 
 def load_metadata(path):
@@ -171,12 +195,13 @@ def load_metadata(path):
     try:
         return json.loads(raw)
     except json.JSONDecodeError as e:
-        die(f"{path} is not valid JSON ({e}). Fix the file before rerunning.")
+        die("metadata_invalid_json",
+            f"{path} is not valid JSON ({e}). Fix the file before rerunning.", path=path)
 
 
 def read_letter(args):
     if args.file and args.stdin:
-        die("pass --file or --stdin, not both.")
+        die("bad_arguments", "pass --file or --stdin, not both.")
     if args.file:
         text = read_text_file(
             args.file, "letter file",
@@ -185,13 +210,13 @@ def read_letter(args):
         try:
             text = sys.stdin.read()
         except UnicodeDecodeError:
-            die("the text piped in on stdin is not valid UTF-8. Re-encode it as UTF-8 "
-                "and rerun.")
+            die("input_not_utf8", "the text piped in on stdin is not valid UTF-8. "
+                "Re-encode it as UTF-8 and rerun.")
         except OSError as e:
-            die(f"cannot read the letter from stdin: {e.strerror or e}.")
+            die("input_unreadable", f"cannot read the letter from stdin: {e.strerror or e}.")
     else:
-        die("no letter supplied. Pass --file <path> or --stdin (or use --info / "
-            "--list-airlines, which need no letter).")
+        die("bad_arguments", "no letter supplied. Pass --file <path> or --stdin "
+            "(or use --info / --list-airlines, which need no letter).")
     # A file or heredoc appends exactly one newline the author did not type, so exactly one
     # comes off — unconditionally, whatever the count. Content ending in a deliberate blank
     # line arrives as "…\n\n" and correctly keeps one newline. Stripping only when a single
@@ -200,7 +225,7 @@ def read_letter(args):
     if text.endswith("\n"):
         text = text[:-1]
     if not text.strip():
-        die("the letter is empty. Nothing to measure.")
+        die("empty_letter", "the letter is empty. Nothing to measure.")
     return text
 
 
@@ -214,7 +239,9 @@ def resolve_channel(md, airline, channel_name, limit_override, metadata_path):
     airline_meta = airlines.get(airline)
     if airline_meta is None:
         if limit_override is None:
-            die(f"airline {airline!r} is not in {os.path.basename(metadata_path)} "
+            die("unknown_airline",
+                known=sorted(airlines),
+                message=f"airline {airline!r} is not in {os.path.basename(metadata_path)} "
                 f"(known: {', '.join(sorted(airlines)) or 'none'}).\n"
                 f"  Ask the user for the form's character limit and pass it: "
                 f"--airline {airline} --limit <N>\n"
@@ -226,8 +253,10 @@ def resolve_channel(md, airline, channel_name, limit_override, metadata_path):
     channels = airline_meta.get("channels", {})
     channel_meta = channels.get(channel_name)
     if channel_meta is None:
-        die(f"channel {channel_name!r} is not configured for {airline} "
-            f"(configured: {', '.join(sorted(channels)) or 'none'}).")
+        die("unknown_channel",
+            f"channel {channel_name!r} is not configured for {airline} "
+            f"(configured: {', '.join(sorted(channels)) or 'none'}).",
+            known=sorted(channels))
     return airline_meta, channel_meta
 
 
@@ -310,7 +339,7 @@ def emit(payload):
 
 
 def main():
-    p = argparse.ArgumentParser(
+    p = JsonArgumentParser(
         description="Measure a complaint letter against an airline's submission-form limits.")
     p.add_argument("--airline", help="IATA airline code, e.g. AA, WN")
     p.add_argument("--channel", default="web_form",
@@ -334,17 +363,19 @@ def main():
         return 0
 
     if not args.airline:
-        die("--airline is required (or use --list-airlines).")
+        die("bad_arguments", "--airline is required (or use --list-airlines).")
     if args.limit is not None and args.limit <= 0:
-        die(f"--limit must be a positive character count, got {args.limit}.")
+        die("bad_arguments", f"--limit must be a positive character count, got {args.limit}.", given=args.limit)
 
     airline = args.airline.upper()
 
     if args.info:
         airline_meta = md.get("airlines", {}).get(airline)
         if airline_meta is None:
-            die(f"airline {airline!r} is not in {os.path.basename(args.metadata)} "
-                f"(known: {', '.join(sorted(md.get('airlines', {}))) or 'none'}).")
+            die("unknown_airline",
+                f"airline {airline!r} is not in {os.path.basename(args.metadata)} "
+                f"(known: {', '.join(sorted(md.get('airlines', {}))) or 'none'}).",
+                known=sorted(md.get("airlines", {})))
         emit({"airline": airline, "metadata": airline_meta})
         return 0
 

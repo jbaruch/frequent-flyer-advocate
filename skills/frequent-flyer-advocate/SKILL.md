@@ -334,8 +334,9 @@ python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-adv
 # add --limit <N> when Step 3 got a limit for an airline the metadata doesn't record
 ```
 
-Exit 0 means it fits, 1 means it overflows, 2 means the invocation or metadata is wrong. The
-script emits a JSON report; read the verdict from it rather than recomputing anything.
+Exit 0 means it fits, 1 means it overflows, 2 means the invocation or metadata is wrong.
+Every path emits one JSON object on stdout, failures included; read the verdict from it
+rather than recomputing anything.
 
 Presenting requires **both** exit 0 and an empty `formatting_warnings` array.
 
@@ -346,8 +347,8 @@ Presenting requires **both** exit 0 and an empty `formatting_warnings` array.
   `char_limit`, and `status` from the report; never substitute a count of your own. Where
   `count_verified` is `false`, tell the user the count is unverified — the form's own counter
   is the final word, and a draft measuring close to the limit may still be rejected by it.
-- **Exit 2** — fix what the stderr message names, then rerun. Never fall back to counting
-  by hand.
+- **Exit 2** — stdout carries `{"error": <code>, "message": <text>}`. Fix what `message`
+  names, then rerun. Never fall back to counting by hand.
 
 Two different numbers can come back from a live form. Keep them apart:
 

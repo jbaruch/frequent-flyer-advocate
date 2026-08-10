@@ -90,6 +90,23 @@ def report(args, stdin_text=None):
     return json.loads(r.stdout), r.returncode
 
 
+def failure(args, stdin_text=None):
+    """Run an expected-failure invocation and return its parsed stdout error object.
+
+    script-delegation makes stdout structured on every path, so a caller branches on the
+    `error` field rather than scraping stderr. Every failure test goes through here, which
+    means a path that regresses to prose-only stderr fails on the json.loads.
+    """
+    r = run(args, stdin_text=stdin_text)
+    assert r.returncode == ARG_ERROR, f"{args}: expected exit 2, got {r.returncode}\n{r.stderr}"
+    assert r.stdout.strip(), f"{args}: stdout was empty; the JSON contract covers failures too"
+    payload = json.loads(r.stdout)
+    assert payload.get("error"), f"{args}: no error code in {payload}"
+    assert payload.get("message"), f"{args}: no message in {payload}"
+    assert "Traceback" not in r.stderr, f"{args} leaked a traceback:\n{r.stderr}"
+    return payload
+
+
 # ── the failure this script exists to prevent ─────────────────────────────────
 
 def test_reported_southwest_draft_is_caught():
@@ -423,6 +440,44 @@ def test_skill_invocations_use_the_plugin_mount_path():
         if "python3 " not in line:
             continue
         assert mount in line, f"invocation does not use the mount path:\n  {line.strip()}"
+
+
+def test_every_failure_mode_emits_a_structured_error_on_stdout():
+    d = _mktemp("ffa-errshape-")
+    bad_utf8 = os.path.join(d, "bad.txt")
+    with open(bad_utf8, "wb") as f:
+        f.write(b"letter \xff\xfe body")
+    not_json = os.path.join(d, "not-json.json")
+    with open(not_json, "w", encoding="utf-8") as f:
+        f.write("{ this is valid UTF-8 but not JSON")
+    letter = write_letter(PLAIN_LETTER)
+
+    cases = {
+        "bad_arguments": ["--airline", "AA", "--limit", "abc", "--file", letter],
+        "input_not_found": ["--airline", "AA", "--file", os.path.join(d, "gone.txt")],
+        "input_not_a_file": ["--airline", "AA", "--file", d],
+        "input_not_utf8": ["--airline", "AA", "--file", bad_utf8],
+        "empty_letter": ["--airline", "AA", "--stdin"],
+        "unknown_airline": ["--airline", "QQ", "--file", letter],
+        "unknown_channel": ["--airline", "WN", "--channel", "telegram", "--file", letter],
+        "metadata_invalid_json": ["--airline", "AA", "--metadata", not_json, "--file", letter],
+    }
+    for expected, args in cases.items():
+        payload = failure(args, stdin_text="   \n" if "--stdin" in args else None)
+        assert payload["error"] == expected, f"{args}\n  wanted {expected}, got {payload}"
+
+
+def test_unrecognized_flag_is_structured_not_bare_usage():
+    # argparse's own error path exits 2 with usage on stderr and nothing on stdout, which
+    # would be the one hole left in the contract.
+    payload = failure(["--airline", "AA", "--not-a-flag"])
+    assert payload["error"] == "bad_arguments", payload
+    assert "usage" in payload, payload
+
+
+def test_unknown_airline_error_names_what_is_known():
+    payload = failure(["--airline", "QQ", "--file", write_letter(PLAIN_LETTER)])
+    assert payload["known"] == ["AA", "WN"], payload
 
 
 def test_shipped_metadata_records_provenance_for_every_limit():
