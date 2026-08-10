@@ -34,6 +34,7 @@ Examples:
 """
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -117,6 +118,16 @@ HOTEL_ALIASES = {
     "comfort inn": "CHOICE", "quality inn": "CHOICE",
     "best western": "BESTWESTERN",
 }
+
+
+def emit_json(payload):
+    """Write one JSON object to stdout — the agent-facing output contract.
+
+    Every command's --json mode goes through here so the shape stays uniform:
+    a single object, never a bare array or a stream of lines. Diagnostics stay
+    on stderr, per rules/file-hygiene.md I/O Conventions.
+    """
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
 
 
 def normalize_brand(name):
@@ -399,29 +410,47 @@ def _link(target):
     print(f"   Found existing inventory ({active} active credit(s)).")
 
 
-def cmd_status(_args):
-    """Report store readiness so the skill's bootstrap doesn't reimplement the contract.
+def store_status():
+    """Resolve store readiness. Returns (payload, exit_code).
 
-    Single source of truth for "is the store usable?": prints one of `ready` / `missing` /
-    `invalid: <reason>` and exits 0 (ready), 3 (missing), or 4 (invalid). Mirrors the
-    isdir-based contract that require_initialized() enforces.
+    Single source of truth for "is the store usable?". `state` is one of
+    ready / missing / invalid, mirroring the isdir-based contract that
+    require_initialized() enforces.
     """
     if os.path.isdir(CREDITS_DIR):
-        # Exact, bare readiness token (machine-readable contract); the resolved path
-        # goes to stderr so stdout stays a single stable token, like `missing`.
-        print("ready")
-        print(f"  store: {os.path.realpath(CREDITS_DIR)}", file=sys.stderr)
-        sys.exit(0)
+        return {"state": "ready", "store": os.path.realpath(CREDITS_DIR),
+                "reason": None}, 0
     if os.path.islink(CREDITS_DIR):
         target = os.readlink(CREDITS_DIR)
         if not os.path.exists(CREDITS_DIR):
-            print(f"invalid: dangling symlink → {target} "
-                  f"(cloud folder unmounted? re-link or remove it)")
+            reason = (f"dangling symlink → {target} "
+                      f"(cloud folder unmounted? re-link or remove it)")
         else:
-            print(f"invalid: symlink → {target} is not a directory")
-        sys.exit(4)
+            reason = f"symlink → {target} is not a directory"
+        return {"state": "invalid", "store": None, "reason": reason}, 4
     if os.path.exists(CREDITS_DIR):
-        print(f"invalid: {CREDITS_DIR} exists but is not a directory")
+        return {"state": "invalid", "store": None,
+                "reason": f"{CREDITS_DIR} exists but is not a directory"}, 4
+    return {"state": "missing", "store": None, "reason": None}, 3
+
+
+def cmd_status(args):
+    """Report store readiness so the skill's bootstrap doesn't reimplement the contract.
+
+    Exits 0 (ready), 3 (missing), or 4 (invalid) in both output modes.
+    """
+    payload, code = store_status()
+    if args.json:
+        emit_json(payload)
+        sys.exit(code)
+    if payload["state"] == "ready":
+        # Exact, bare readiness token (machine-readable contract); the resolved path
+        # goes to stderr so stdout stays a single stable token, like `missing`.
+        print("ready")
+        print(f"  store: {payload['store']}", file=sys.stderr)
+        sys.exit(0)
+    if payload["state"] == "invalid":
+        print(f"invalid: {payload['reason']}")
         sys.exit(4)
     print("missing")
     sys.exit(3)
@@ -718,6 +747,8 @@ def cmd_add(args):
     ctype = args.type.upper()
     if ctype not in VALID_TYPES:
         print(f"ERROR: Invalid type '{ctype}'. Valid: {', '.join(VALID_TYPES)}", file=sys.stderr)
+        if args.json:
+            emit_json({"error": "invalid_type", "given": ctype, "valid": VALID_TYPES})
         sys.exit(1)
 
     cid = next_id(content)
@@ -744,12 +775,20 @@ def cmd_add(args):
     credit_md = format_credit(credit)
     content = insert_credit(content, credit_md, "active")
     write_inventory(content)
+
+    days_to_expiry = None
+    if args.expiry:
+        exp = datetime.strptime(args.expiry, "%Y-%m-%d").date()
+        days_to_expiry = (exp - datetime.now().date()).days
+
+    if args.json:
+        emit_json({"added": credit, "days_to_expiry": days_to_expiry})
+        return
+
     pax_str = f" ({args.passenger})" if args.passenger else ""
     print(f"✅ Added credit #{cid}: [{ctype}] {args.description}{pax_str}")
     if args.expiry:
-        exp = datetime.strptime(args.expiry, "%Y-%m-%d").date()
-        days = (exp - datetime.now().date()).days
-        print(f"   Expires: {args.expiry} ({days} days from now)")
+        print(f"   Expires: {args.expiry} ({days_to_expiry} days from now)")
 
 
 def cmd_use(args):
@@ -758,6 +797,8 @@ def cmd_use(args):
 
     if not credit:
         print(f"ERROR: Credit #{args.id} not found in active credits.", file=sys.stderr)
+        if args.json:
+            emit_json({"error": "not_found", "id": args.id})
         sys.exit(1)
 
     # Add usage metadata and move to archive
@@ -768,6 +809,11 @@ def cmd_use(args):
     credit_md = format_credit(credit)
     content = insert_credit(content, credit_md, "archive")
     write_inventory(content)
+
+    if args.json:
+        emit_json({"used": credit})
+        return
+
     print(f"✅ Marked credit #{args.id} as used: [{credit['type']}] {credit['description']}")
     if args.note:
         print(f"   Note: {args.note}")
@@ -1076,10 +1122,17 @@ Examples:
   %(prog)s summary --passenger baruch        Just Baruch
         """,
     )
+    # Inherited by every subcommand so `<cmd> --json` works uniformly. Agents
+    # invoking this script through skills/using-travel-credits always pass it;
+    # the prose default is the interactive human path.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--json", action="store_true",
+                        help="Emit a JSON object on stdout instead of prose")
+
     sub = parser.add_subparsers(dest="command")
 
     # list
-    ls = sub.add_parser("list", help="List active credits")
+    ls = sub.add_parser("list", help="List active credits", parents=[common])
     ls.add_argument("--type", help=f"Filter by type: {', '.join(VALID_TYPES)}")
     ls.add_argument("--passenger", help="Filter by passenger name (substring match)")
     ls.add_argument("--airline", help="Filter by airline code (e.g. DL, AA, AF)")
@@ -1087,7 +1140,7 @@ Examples:
     ls.add_argument("--verbose", "-v", action="store_true", help="Show full details")
 
     # add
-    add = sub.add_parser("add", help="Add a new credit")
+    add = sub.add_parser("add", help="Add a new credit", parents=[common])
     add.add_argument("--type", required=True, help=f"Credit type: {', '.join(VALID_TYPES)}")
     add.add_argument("--description", "--desc", required=True, help="Description")
     add.add_argument("--value", required=True, help="Value (dollar amount or '1 certificate')")
@@ -1099,36 +1152,36 @@ Examples:
     add.add_argument("--confirmation", help="Confirmation/reference code")
 
     # use
-    use = sub.add_parser("use", help="Mark a credit as used")
+    use = sub.add_parser("use", help="Mark a credit as used", parents=[common])
     use.add_argument("--id", type=int, required=True, help="Credit ID number")
     use.add_argument("--note", help="Usage note (what it was applied to)")
 
     # expiring
-    exp = sub.add_parser("expiring", help="Show credits expiring soon")
+    exp = sub.add_parser("expiring", help="Show credits expiring soon", parents=[common])
     exp.add_argument("--days", type=int, default=90, help="Days ahead to check (default: 90)")
     exp.add_argument("--passenger", help="Filter by passenger name (substring match)")
 
     # check
-    chk = sub.add_parser("check", help="Check applicable credits for a scenario")
+    chk = sub.add_parser("check", help="Check applicable credits for a scenario", parents=[common])
     chk.add_argument("--scenario", required=True, help="Describe the flight scenario (include airline and route)")
     chk.add_argument("--passengers", help="Comma-separated passenger names on this trip (default: check all)")
 
     # summary
-    sm = sub.add_parser("summary", help="Summary of all credits")
+    sm = sub.add_parser("summary", help="Summary of all credits", parents=[common])
     sm.add_argument("--passenger", help="Filter by passenger name (substring match)")
 
     # init
-    init = sub.add_parser("init", help="Set up credits storage (default or custom location like Google Drive)")
+    init = sub.add_parser("init", help="Set up credits storage (default or custom location like Google Drive)", parents=[common])
     init_mode = init.add_mutually_exclusive_group()
     init_mode.add_argument("--default", action="store_true", help="Non-interactive: create a fresh store at ~/.claude/travel-credits")
     init_mode.add_argument("--path", help="Non-interactive: create a fresh store at this path, symlinked back to ~/.claude")
 
     # link
-    lnk = sub.add_parser("link", help="Link ~/.claude/travel-credits to an existing inventory directory (e.g. cloud-synced)")
+    lnk = sub.add_parser("link", help="Link ~/.claude/travel-credits to an existing inventory directory (e.g. cloud-synced)", parents=[common])
     lnk.add_argument("--path", required=True, help="Path to the existing travel-credits directory")
 
     # status
-    sub.add_parser("status", help="Report store readiness: ready (0) / missing (3) / invalid (4)")
+    sub.add_parser("status", help="Report store readiness: ready (0) / missing (3) / invalid (4)", parents=[common])
 
     args = parser.parse_args()
     if not args.command:
