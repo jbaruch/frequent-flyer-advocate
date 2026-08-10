@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.9.30 — 2026-08-10
+
 ### Changed
 
 - CI pins bumped: `actions/checkout` 5.1.0 → 7.0.1, `actions/setup-python` 6.3.0 → 7.0.0, and pyright 1.1.408 → 1.1.411 in the hash-locked `.github/requirements.txt`. Supersedes the three separate Dependabot PRs (#33, #34, #35) — the two action bumps edit adjacent lines of `tests.yml` and would have conflicted with each other, and merging three bare bumps would have published three versions with no CHANGELOG entry apiece, reopening the gap #32 just closed.
