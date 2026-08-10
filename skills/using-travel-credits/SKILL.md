@@ -24,9 +24,9 @@ Explicit chains:
 - Steps 4-8 run Step 3 first: this skill owns the record shape, so it migrates
   what it is about to read or write. Step 3 is idempotent, so on a current store
   this costs one call and changes nothing
-- Step 3 continues to the calling step only when the store is wholly readable.
-  Records it could not consume mean every later command returns a subset, so it
-  continues to Step 9 and stops instead
+- Step 3 continues to the calling step only when its `unconsumable` count is
+  zero. Records the reader cannot consume mean every later command returns a
+  subset, so it continues to Step 9 and stops instead
 - Step 3 invoked directly finishes there
 - Step 9 chains back exactly once, to Step 2, and only for a missing store
 - Step 2 re-runs Step 1 once, then proceeds or continues to Step 9; it never loops
@@ -111,15 +111,18 @@ runs.
 Idempotent: a store already current reports `changed: false` and is not
 rewritten, so running it ahead of every read costs one call.
 
-Then gate on the payload. `skipped_newer` and `unreadable` count records this
-script cannot consume — `skipped_newer` were written by a newer version of the
-plugin, `unreadable` carry a version line that does not parse. Migration leaves
-both alone by design, and every later command omits them.
+Then gate on `unconsumable`. It is the count of records in the store that the
+reader cannot consume after migration, measured by asking the parser rather than
+by tallying what migration did — so it holds whatever the cause. `skipped_newer`
+and `unreadable` explain it: records written by a newer version of the plugin,
+and records whose version line does not parse. Migration leaves both alone by
+design, and every later command omits them.
 
-- Both zero — the store is wholly readable. Reached from Steps 4-8, continue to
-  the step that called it. Invoked directly, report the counts and finish here
-- Either above zero — continue to Step 9 and stop. Do not fall through to the
-  calling step: `list`, `expiring`, and `check` would return a subset while
+- `unconsumable` zero — the store is wholly readable. Reached from Steps 4-8,
+  continue to the step that called it. Invoked directly, report the counts and
+  finish here
+- `unconsumable` above zero — continue to Step 9 and stop. Do not fall through to
+  the calling step: `list`, `expiring`, and `check` would return a subset while
   reading as the whole store, and `add` would write against an inventory it
   cannot fully see
 
@@ -227,6 +230,9 @@ store, which this skill forbids. Finish here.
   parse as an integer, which means the store was hand-edited or truncated.
   Report the count and stop. Repairing it is the user's action — this skill
   will not guess at the intended version.
+- Step 3 reported `unconsumable` above zero with both other counts at zero.
+  Records exist that the reader drops for a reason migration did not classify.
+  Report the count and stop; do not present the partial inventory as the store.
 - Unknown `--id` on Step 8. The id is not in the active section. The usual cause
   is a credit already marked used, which now sits in the archive under that same
   id — ids are stable and a record keeps its own through archiving. Report that

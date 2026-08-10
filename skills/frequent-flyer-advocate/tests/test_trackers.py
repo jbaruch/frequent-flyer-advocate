@@ -1040,6 +1040,77 @@ def test_migrate_does_not_rewrite_a_version_line_over_spacing():
         assert fh.read() == spaced, "the store must be left byte-identical"
 
 
+def test_migrate_sees_an_indented_version_line_the_way_the_parser_does():
+    """Migration and parsing must recognize a field line by the same rule.
+
+    parse_credits() strips before matching. Anchoring migration on column zero
+    made an indented version line invisible to it and visible to the parser:
+    migrate re-stamped the record and reported the store wholly readable, then
+    every later command dropped it. The router's Step 3 gate reads that report,
+    so the divergence turned into a partial inventory presented as the whole one.
+    """
+    home = _mktemp("schemaver-indent-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Indented newer",
+                  "--value", "10.00", "--airline", "DL"], home)
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        text = fh.read()
+    with open(inventory, "w") as fh:
+        fh.write(text.replace("- **Schema version**: 1", "  - **Schema version**: 99"))
+
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+    assert payload["skipped_newer"] == 1, f"indented newer record not recognized: {payload}"
+    assert payload["stamped"] == 0, f"a second version line was spliced in: {payload}"
+    assert payload["changed"] is False, f"an unmigratable record must not be rewritten: {payload}"
+
+    # The report must agree with what the reader actually consumes.
+    assert payload["unconsumable"] == 1, payload
+    assert _json_out(run(CREDITS, ["list", "--json"], home))["count"] == 0
+
+
+def test_migrate_reports_unconsumable_from_the_parser_not_the_buckets():
+    """`unconsumable` is measured by asking the parser, so it holds whatever the cause."""
+    home = _mktemp("schemaver-unconsumable-")
+    run(CREDITS, ["init", "--default"], home)
+    for desc in ("Readable one", "Readable two"):
+        run(CREDITS, ["add", "--type", "ECREDIT", "--desc", desc,
+                      "--value", "10.00", "--airline", "DL"], home)
+
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+    assert payload["unconsumable"] == 0, payload
+    assert _json_out(run(CREDITS, ["list", "--json"], home))["count"] == 2
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        text = fh.read()
+    with open(inventory, "w") as fh:
+        fh.write(text.replace("- **Schema version**: 1", "- **Schema version**: 99", 1))
+
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+    assert payload["unconsumable"] == 1, payload
+    assert _json_out(run(CREDITS, ["list", "--json"], home))["count"] == 1
+
+
+def test_next_id_counts_an_indented_record():
+    """An id is never reissued over a record the heading scan failed to see."""
+    home = _mktemp("schemaver-indentid-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Indented record",
+                  "--value", "10.00", "--airline", "DL"], home)
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        text = fh.read()
+    with open(inventory, "w") as fh:
+        fh.write(text.replace("### #1 ", "  ### #1 "))
+
+    added = _json_out(run(CREDITS, ["add", "--json", "--type", "VOUCHER",
+                                    "--desc", "Next record", "--value", "5.00"], home))
+    assert added["added"]["id"] == 2, f"id reissued over an indented record: {added}"
+
+
 def test_migrate_reports_an_unparseable_version_line():
     """A version line that is not an integer is counted, not silently swallowed.
 

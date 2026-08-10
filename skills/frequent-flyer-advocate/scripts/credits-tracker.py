@@ -644,8 +644,16 @@ def stamp_schema_version(content):
     lines = content.split("\n")
     out = []
     for i, line in enumerate(lines):
-        if line.startswith(VERSION_LINE_PREFIX):
-            stored = line[len(VERSION_LINE_PREFIX):].strip()
+        # Recognize a line exactly as parse_credits() does — it strips before
+        # matching, so anchoring on column zero here made the two disagree: an
+        # indented version line was invisible to migration and visible to the
+        # parser, and migrate then reported a store "wholly readable" that the
+        # parser went on to reject. The indent is preserved on re-emit.
+        stripped = line.strip()
+        indent = line[:len(line) - len(line.lstrip())]
+
+        if stripped.startswith(VERSION_LINE_PREFIX):
+            stored = stripped[len(VERSION_LINE_PREFIX):].strip()
             try:
                 version = int(stored)
             except ValueError:
@@ -668,16 +676,34 @@ def stamp_schema_version(content):
             while version < SCHEMA_VERSION:
                 upgrade_record_body([], version)
                 version += 1
-            out.append(f"{VERSION_LINE_PREFIX} {SCHEMA_VERSION}")
+            out.append(f"{indent}{VERSION_LINE_PREFIX} {SCHEMA_VERSION}")
             continue
 
         out.append(line)
-        if line.startswith("### #"):
-            following = lines[i + 1] if i + 1 < len(lines) else ""
+        if stripped.startswith("### #"):
+            following = lines[i + 1].strip() if i + 1 < len(lines) else ""
             if not following.startswith(VERSION_LINE_PREFIX):
                 stats["stamped"] += 1
-                out.append(f"{VERSION_LINE_PREFIX} {SCHEMA_VERSION}")
+                out.append(f"{indent}{VERSION_LINE_PREFIX} {SCHEMA_VERSION}")
     return "\n".join(out), stats
+
+
+def count_record_headings(content):
+    """Every `### #` record heading inside the two section blocks.
+
+    Counted the way parse_credits() scans — same markers, same leading-whitespace
+    tolerance — so it is the total that view is a subset of.
+    """
+    total = 0
+    for start_marker, end_marker in (("<!-- CREDITS_START", "<!-- CREDITS_END"),
+                                     ("<!-- ARCHIVE_START", "<!-- ARCHIVE_END")):
+        start_idx = content.find(start_marker)
+        end_idx = content.find(end_marker)
+        if start_idx == -1 or end_idx == -1:
+            continue
+        block = content[content.index("\n", start_idx) + 1:end_idx]
+        total += sum(1 for ln in block.split("\n") if ln.strip().startswith("### #"))
+    return total
 
 
 def write_inventory(content):
@@ -822,7 +848,9 @@ def next_id(content):
     that view omits records newer than SCHEMA_VERSION, and an id allocated over
     one of those would collide with a record this script cannot see.
     """
-    all_ids = [int(n) for n in re.findall(r"^### #(\d+)", content, re.MULTILINE)]
+    # Leading whitespace tolerated, matching parse_credits() — a heading anchored
+    # only at column zero would miss an indented record and reissue its id.
+    all_ids = [int(n) for n in re.findall(r"^[ \t]*### #(\d+)", content, re.MULTILINE)]
     return max(all_ids, default=0) + 1
 
 
@@ -1075,8 +1103,17 @@ def cmd_migrate(args):
     if changed:
         write_inventory(migrated)
 
+    # Ask the parser rather than trusting the buckets. The buckets describe what
+    # migration did; this asks what the reader can actually consume afterwards,
+    # so a future divergence between the two line-matchers surfaces here as a
+    # non-zero count instead of as a silently partial inventory downstream.
+    readable = (len(parse_credits(migrated, "active"))
+                + len(parse_credits(migrated, "archive")))
+    unconsumable = count_record_headings(migrated) - readable
+
     if args.json:
-        emit_json({"schema_version": SCHEMA_VERSION, "changed": changed, **stats})
+        emit_json({"schema_version": SCHEMA_VERSION, "changed": changed,
+                   "unconsumable": unconsumable, **stats})
         return
 
     if not changed:
@@ -1089,6 +1126,8 @@ def cmd_migrate(args):
         print(f"   ⚠️  Left untouched, newer than this script: {stats['skipped_newer']}")
     if stats["unreadable"]:
         print(f"   ⚠️  Unreadable version line: {stats['unreadable']}")
+    if unconsumable:
+        print(f"   ⚠️  Records the reader cannot consume: {unconsumable}")
 
 
 def cmd_expiring(args):
