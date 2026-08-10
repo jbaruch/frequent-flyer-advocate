@@ -1,5 +1,15 @@
 # Changelog
 
+### Added
+
+- `complaints-bank.py update` corrects a filed complaint's fields. Resolves #43.
+  - A complaint is written at intake from what is known then, and some of it turns out wrong later: a severity assessed before the airline's response arrived, a summary written before the timeline was clear, an outcome that shifts once the ask is finalized. `resolve` could only set the resolution and its note.
+  - The workarounds cost more here than they did for credits. Hand-editing the bank file breaks its own contract; re-filing puts a second copy of one incident in the bank, and `check` counts complaints to find patterns — so a duplicate does not merely clutter, it inflates the number `complaint-patterns` is about to assert as fact in a letter.
+  - Vocabulary is validated per store: the airline and hotel category sets are different, and each store rejects the other's. Severity is shared and validated against `VALID_SEVERITIES`. A rejected update leaves the bank byte-identical rather than half-applied.
+  - The heading is rebuilt when the incident it names changes — category, or flight/route/date for airline, property/stay-dates for hotel — so it never describes an earlier version of the record.
+  - A text-level field edit, so anything `format_complaint()` does not know survives. Values carrying a line break are refused on the same grounds as `credits-tracker.py`: the format is line-oriented, and an injected `### #` heading becomes a second complaint that `check` counts.
+  - `--resolution` is deliberately absent. `resolve` owns that transition, exactly as `use` owns the credits one. A resolved complaint stays editable, though — it is still live pattern data, and a wrong severity on it is still worth correcting.
+
 ## 0.9.36 — 2026-08-10
 
 ### Fixed

@@ -818,6 +818,138 @@ _AIRLINE_FILE = ["file", "--airline", "DL", "--flight", "DL1234",
                  "--severity", "MAJOR", "--summary", "6h delay", "--outcome", "refund"]
 
 
+_HOTEL_FILE = ["--store", "hotel", "file", "--brand", "Hilton",
+               "--property", "Hilton London", "--reservation", "34344",
+               "--stay-dates", "2026-05-05/2026-05-08", "--loyalty-status", "Gold",
+               "--passenger", "J Baruch", "--category", "HABITABILITY",
+               "--severity", "MAJOR", "--summary", "No hot water", "--outcome", "refund"]
+
+
+def _filed_bank(prefix, filing=None):
+    home = _mktemp(prefix)
+    assert run(BANK, ["init", "--default"], home).returncode == 0
+    assert run(BANK, filing or _AIRLINE_FILE, home).returncode == 0
+    return home
+
+
+def test_bank_update_corrects_fields_assessed_wrong_at_intake():
+    """A complaint is filed from what is known then; some of it turns out wrong later.
+
+    Without this the routes were hand-editing a file the bank's contract forbids, or
+    re-filing — and `check` counts complaints to find patterns, so a duplicate inflates
+    a number `complaint-patterns` is about to assert as fact.
+    """
+    home = _filed_bank("bank-update-")
+    payload = _json_out(run(BANK, ["update", "--json", "--id", "1", "--severity",
+                                   "RIGHTS_VIOLATION", "--summary", "Cancelled, no rebooking"],
+                            home))
+    assert payload["fields_changed"] == ["Severity", "Summary"], payload
+
+    listed = _json_out(run(BANK, ["list", "--json"], home))["complaints"][0]
+    assert listed["severity"] == "RIGHTS_VIOLATION"
+    assert listed["summary"] == "Cancelled, no rebooking"
+    assert listed["outcome_requested"] == "refund", "an omitted field must be preserved"
+    assert listed["route"] == "ATL-SFO"
+
+    checked = _json_out(run(BANK, ["check", "--json", "--airline", "DL"], home))
+    assert len(checked["matches"]) == 1, f"update must not duplicate the complaint: {checked}"
+
+
+def test_bank_update_rebuilds_the_heading_when_the_incident_changes():
+    """The heading names the incident; leaving it stale would describe an older record."""
+    home = _filed_bank("bank-heading-")
+    run(BANK, ["update", "--json", "--id", "1", "--category", "CANCELLATION",
+               "--route", "ATL-LAX"], home)
+    bank = os.path.join(home, ".claude", "complaint-bank", "complaints.md")
+    with open(bank) as fh:
+        text = fh.read()
+    assert "### #1 — [CANCELLATION] DL1234 ATL-LAX 2026-01-15" in text, text
+
+
+def test_bank_update_validates_the_vocabulary_per_store():
+    """Airline and hotel categories are different sets; each store rejects the other's."""
+    airline = _filed_bank("bank-vocab-air-")
+    r = run(BANK, ["update", "--json", "--id", "1", "--category", "HABITABILITY"], airline)
+    assert r.returncode != 0
+    assert _json_out(r)["error"] == "invalid_category", r.stdout
+
+    hotel = _filed_bank("bank-vocab-hotel-", _HOTEL_FILE)
+    r = run(BANK, ["--store", "hotel", "update", "--json", "--id", "1",
+                   "--category", "TARMAC"], hotel)
+    assert r.returncode != 0
+    payload = _json_out(r)
+    assert payload["error"] == "invalid_category" and payload["store"] == "hotel", payload
+    assert run(BANK, ["--store", "hotel", "update", "--json", "--id", "1",
+                      "--category", "CLEANLINESS"], hotel).returncode == 0
+
+
+def test_bank_update_rejects_a_bad_severity_and_writes_nothing():
+    home = _filed_bank("bank-sev-")
+    bank = os.path.join(home, ".claude", "complaint-bank", "complaints.md")
+    with open(bank) as fh:
+        before = fh.read()
+    r = run(BANK, ["update", "--json", "--id", "1", "--severity", "CATASTROPHIC"], home)
+    assert r.returncode != 0
+    assert _json_out(r)["error"] == "invalid_severity", r.stdout
+    with open(bank) as fh:
+        assert fh.read() == before, "a rejected update must not touch the bank"
+
+
+def test_bank_update_requires_a_field_and_reports_an_unknown_id():
+    home = _filed_bank("bank-guards-")
+    r = run(BANK, ["update", "--json", "--id", "1"], home)
+    assert r.returncode != 0 and _json_out(r)["error"] == "no_fields_given", r.stdout
+
+    r = run(BANK, ["update", "--json", "--id", "99", "--summary", "x"], home)
+    assert r.returncode != 0
+    payload = _json_out(r)
+    assert payload["error"] == "not_found" and payload["store"] == "airline", payload
+
+
+def test_bank_update_refuses_a_newline_in_a_value():
+    """check counts complaints, so an injected one inflates a number a letter asserts."""
+    home = _filed_bank("bank-inject-")
+    r = run(BANK, ["update", "--json", "--id", "1", "--summary",
+                   "x\n### #99 — [DELAY] Injected\n- **Severity**: MINOR"], home)
+    assert r.returncode != 0
+    payload = _json_out(r)
+    assert payload["error"] == "multiline_value" and payload["fields"] == ["summary"], payload
+    assert len(_json_out(run(BANK, ["check", "--json", "--airline", "DL"], home))["matches"]) == 1
+
+
+def test_bank_update_preserves_fields_the_formatter_does_not_know():
+    home = _filed_bank("bank-preserve-")
+    bank = os.path.join(home, ".claude", "complaint-bank", "complaints.md")
+    with open(bank) as fh:
+        text = fh.read()
+    with open(bank, "w") as fh:
+        fh.write(text.replace("- **Resolution**:", "- **Legacy note**: keep me\n- **Resolution**:"))
+    run(BANK, ["update", "--json", "--id", "1", "--summary", "revised"], home)
+    with open(bank) as fh:
+        assert "- **Legacy note**: keep me" in fh.read()
+
+
+def test_bank_update_does_not_own_the_resolution_transition():
+    """`resolve` owns it, exactly as `use` owns the credits transition."""
+    home = _filed_bank("bank-resolution-")
+    r = run(BANK, ["update", "--json", "--id", "1", "--resolution", "RESOLVED"], home)
+    assert r.returncode != 0, "update must not accept --resolution"
+    resolved = _json_out(run(BANK, ["resolve", "--json", "--id", "1",
+                                    "--resolution", "RESOLVED"], home))
+    assert resolved["updated"]["resolution"] == "RESOLVED", resolved
+
+
+def test_bank_update_edits_a_resolved_complaint():
+    """A resolved complaint is still live pattern data — a wrong severity should be fixable."""
+    home = _filed_bank("bank-resolved-")
+    run(BANK, ["resolve", "--json", "--id", "1", "--resolution", "DENIED"], home)
+    payload = _json_out(run(BANK, ["update", "--json", "--id", "1",
+                                   "--severity", "MINOR"], home))
+    assert payload["fields_changed"] == ["Severity"], payload
+    listed = _json_out(run(BANK, ["list", "--json"], home))["complaints"][0]
+    assert listed["severity"] == "MINOR" and listed["resolution"] == "DENIED", listed
+
+
 def test_bank_json_every_subcommand_emits_one_object():
     # script-delegation: a skill-invoked deterministic script emits structured data. Every
     # subcommand, success and failure alike, has to parse — an empty stdout reads as a

@@ -17,6 +17,7 @@ Usage:
   python3 complaints-bank.py --store hotel file --brand BRAND --property NAME --reservation CODE --stay-dates START/END --loyalty-status TIER --passenger NAME --category CAT --severity SEV --summary "..." --outcome "..."
   python3 complaints-bank.py [--store airline] check --airline CODE [--passenger NAME] [--route ROUTE]
   python3 complaints-bank.py --store hotel check --brand BRAND [--passenger NAME] [--property NAME]
+  python3 complaints-bank.py [--store {airline,hotel}] update --id ID [--summary ...] [--severity SEV] [--category CAT] [--outcome ...]
   python3 complaints-bank.py [--store {airline,hotel}] resolve --id ID --resolution STATUS [--note TEXT]
   python3 complaints-bank.py [--store {airline,hotel}] list [filters]
 
@@ -832,6 +833,183 @@ def _check_payload(matches, store, primary_field, primary, secondary_field, seco
     }
 
 
+# --flag -> field label, for `update`. Split by store because a hotel complaint and an
+# airline one identify an incident by different things, and the header is built from
+# those. `resolution` / `resolution_note` are deliberately absent: `resolve` owns that
+# transition, exactly as `use` owns the credits one.
+SHARED_UPDATABLE = {
+    "passenger": "Passenger",
+    "severity": "Severity",
+    "summary": "Summary",
+    "outcome": "Outcome Requested",
+}
+AIRLINE_UPDATABLE = {
+    "airline": "Airline",
+    "flight": "Flight",
+    "flight_date": "Flight Date",
+    "route": "Route",
+}
+HOTEL_UPDATABLE = {
+    "brand": "Brand",
+    "property": "Property",
+    "reservation": "Reservation",
+    "stay_dates": "Stay Dates",
+    "loyalty_status": "Loyalty Status",
+}
+
+# Changing one of these changes the heading a complaint is identified by, so the
+# heading is rebuilt rather than left describing the old incident.
+HEADER_FIELDS = {
+    "airline": ("flight", "route", "flight_date"),
+    "hotel": ("property", "stay_dates"),
+}
+
+
+def updatable_for(store):
+    """The flag -> label map for a store. Category is header-borne and handled apart."""
+    specific = HOTEL_UPDATABLE if store == "hotel" else AIRLINE_UPDATABLE
+    return {**SHARED_UPDATABLE, **specific}
+
+
+def reject_multiline(values, json_mode):
+    """Refuse any value carrying a line break before it reaches the bank.
+
+    The record format is line-oriented: one field per line, `### #<id> — [CAT] …` for
+    a heading. A newline in a value is not stored as text, it becomes structure — a
+    `--summary` carrying a `### #` line splices in a whole complaint, and `check`
+    counts complaints to find patterns, so an injected one inflates a number the
+    letter is about to assert as fact.
+    """
+    offenders = sorted(flag for flag, value in values.items()
+                       if isinstance(value, str) and ("\n" in value or "\r" in value))
+    if not offenders:
+        return
+    print(f"ERROR: {', '.join('--' + f.replace('_', '-') for f in offenders)} may not "
+          f"contain a line break. Record fields are one line each; a newline would be "
+          f"stored as structure, not text.", file=sys.stderr)
+    if json_mode:
+        emit_json({"error": "multiline_value", "fields": offenders})
+    sys.exit(1)
+
+
+def apply_complaint_updates(body, updates):
+    """Set each named field on a complaint's body lines, returning the new body.
+
+    A text-level edit rather than a reserialize: format_complaint() writes only the
+    fields in AIRLINE_FIELDS / HOTEL_FIELDS and would silently drop anything else the
+    record carries. An existing field is replaced where it sits; a new one is appended
+    after the last recognized field line.
+    """
+    out, seen = [], set()
+    for line in body:
+        kv = re.match(r"- \*\*(.+?)\*\*:\s*(.*)", line.strip())
+        label = kv.group(1) if kv else None
+        if label in updates:
+            indent = line[:len(line) - len(line.lstrip())]
+            out.append(f"{indent}- **{label}**: {updates[label]}")
+            seen.add(label)
+            continue
+        out.append(line)
+
+    missing = [(label, value) for label, value in updates.items() if label not in seen]
+    if not missing:
+        return out
+    last_field = max((i for i, ln in enumerate(out)
+                      if re.match(r"- \*\*(.+?)\*\*:", ln.strip())), default=-1)
+    additions = [f"- **{label}**: {value}" for label, value in missing]
+    return out[:last_field + 1] + additions + out[last_field + 1:]
+
+
+def cmd_update(args):
+    """Correct a complaint's filed fields.
+
+    A complaint is written at intake from what is known then, and some of it turns out
+    wrong later: a severity assessed before the airline's response arrived, a summary
+    written before the timeline was clear. Without this the routes were hand-editing a
+    file the bank's contract forbids touching, or re-filing — and `check` counts
+    complaints to find patterns, so a duplicate inflates a number `complaint-patterns`
+    is about to assert as fact.
+    """
+    store = args.store
+    json_mode = getattr(args, "json", False)
+    updatable = updatable_for(store)
+
+    reject_multiline({flag: getattr(args, flag, None)
+                      for flag in list(updatable) + ["category"]}, json_mode)
+
+    updates = {}
+    for flag, label in updatable.items():
+        value = getattr(args, flag, None)
+        if value is not None:
+            updates[label] = value
+
+    new_category = args.category.upper() if args.category else None
+    if not updates and new_category is None:
+        print("ERROR: update needs at least one field to change. See --help.", file=sys.stderr)
+        if json_mode:
+            emit_json({"error": "no_fields_given", "id": args.id, "store": store,
+                       "updatable": sorted(updatable) + ["category"]})
+        sys.exit(1)
+
+    if new_category is not None and new_category not in categories_for(store):
+        print(f"ERROR: Invalid category '{new_category}' for the {store} store. "
+              f"Valid: {', '.join(categories_for(store))}", file=sys.stderr)
+        if json_mode:
+            emit_json({"error": "invalid_category", "given": new_category, "store": store,
+                       "valid": categories_for(store)})
+        sys.exit(1)
+
+    if "Severity" in updates and updates["Severity"].upper() not in VALID_SEVERITIES:
+        print(f"ERROR: Invalid severity '{updates['Severity']}'. "
+              f"Valid: {', '.join(VALID_SEVERITIES)}", file=sys.stderr)
+        if json_mode:
+            emit_json({"error": "invalid_severity", "given": updates["Severity"],
+                       "valid": VALID_SEVERITIES})
+        sys.exit(1)
+    if "Severity" in updates:
+        updates["Severity"] = updates["Severity"].upper()
+
+    content = read_bank(store)
+    target = next((c for c in parse_complaints(content) if c["id"] == args.id), None)
+    if target is None:
+        print(f"ERROR: Complaint #{args.id} not found in the {store} store.", file=sys.stderr)
+        if json_mode:
+            emit_json({"error": "not_found", "id": args.id, "store": store})
+        sys.exit(1)
+
+    lines = content.split("\n")
+    start = next(i for i, ln in enumerate(lines) if re.match(rf"### #{args.id}\s", ln.strip()))
+    end = next((i for i in range(start + 1, len(lines))
+                if lines[i].strip().startswith("### #")), len(lines))
+    body = apply_complaint_updates(lines[start + 1:end], updates)
+
+    # Rebuild the heading when the incident it names changed, so it never describes an
+    # earlier version of the record. Merged onto the parsed record so untouched parts
+    # of the heading survive.
+    merged = dict(target)
+    for flag, label in updatable.items():
+        if label in updates:
+            merged[flag] = updates[label]
+    if new_category:
+        merged["category"] = new_category
+    heading = lines[start]
+    if new_category or any(f in {k for k, v in updatable.items() if v in updates}
+                           for f in HEADER_FIELDS[store]):
+        heading = format_complaint(merged, store).split("\n")[0]
+
+    lines[start:end] = [heading] + body
+    write_bank("\n".join(lines), store)
+
+    changed = sorted(updates) + (["Category"] if new_category else [])
+    if json_mode:
+        emit_json({"updated": {"id": args.id, "store": store,
+                               "category": merged.get("category")},
+                   "fields_changed": changed})
+        return
+    print(f"✅ Updated complaint #{args.id} in the {store} store")
+    print(f"   Changed: {', '.join(changed)}")
+
+
 def cmd_resolve(args):
     store = args.store
     content = read_bank(store)
@@ -1011,6 +1189,23 @@ if __name__ == "__main__":
     chk.add_argument("--route", help="[airline] Filter by route")
     chk.add_argument("--property", help="[hotel] Filter by property name")
 
+    upd = sub.add_parser("update", help="Correct a filed complaint's fields (resolution stays with `resolve`)", parents=[common])
+    upd.add_argument("--id", type=int, required=True, help="Complaint ID")
+    upd.add_argument("--category", help="Replace the category (validated per store)")
+    upd.add_argument("--severity", help=f"Replace the severity: {', '.join(VALID_SEVERITIES)}")
+    upd.add_argument("--summary", help="Replace the summary")
+    upd.add_argument("--outcome", help="Replace the outcome requested")
+    upd.add_argument("--passenger", help="Replace the passenger")
+    upd.add_argument("--airline", help="airline store: replace the airline code")
+    upd.add_argument("--flight", help="airline store: replace the flight number")
+    upd.add_argument("--flight-date", dest="flight_date", help="airline store: replace the flight date")
+    upd.add_argument("--route", help="airline store: replace the route")
+    upd.add_argument("--brand", help="hotel store: replace the brand")
+    upd.add_argument("--property", help="hotel store: replace the property")
+    upd.add_argument("--reservation", help="hotel store: replace the reservation")
+    upd.add_argument("--stay-dates", dest="stay_dates", help="hotel store: replace the stay dates")
+    upd.add_argument("--loyalty-status", dest="loyalty_status", help="hotel store: replace the loyalty status")
+
     res = sub.add_parser("resolve", help="Update complaint resolution", parents=[common])
     res.add_argument("--id", type=int, required=True, help="Complaint ID")
     res.add_argument("--resolution", required=True, help=f"Resolution: {', '.join(VALID_RESOLUTIONS)}")
@@ -1044,6 +1239,7 @@ if __name__ == "__main__":
             "file": cmd_file,
             "check": cmd_check,
             "resolve": cmd_resolve,
+            "update": cmd_update,
             "pending": cmd_pending,
             "list": cmd_list,
         }[args.command](args)
