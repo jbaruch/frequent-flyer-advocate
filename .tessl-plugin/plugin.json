@@ -4,7 +4,8 @@
   "description": "Write professional, persuasive complaint letters to US airlines emphasizing loyalty status, DOT regulations, and airline commitments.",
   "private": false,
   "skills": [
-    "skills/frequent-flyer-advocate"
+    "skills/frequent-flyer-advocate",
+    "skills/using-travel-credits"
   ],
   "rules": [
     "rules/boundaries.md",

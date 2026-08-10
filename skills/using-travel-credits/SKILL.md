@@ -1,0 +1,177 @@
+---
+name: using-travel-credits
+description: >
+  How an LLM agent reads and updates the shared travel-credits inventory at
+  ~/.claude/travel-credits/ — flight credits, vouchers, upgrade certificates,
+  and airline or hotel compensation, tracked for a whole family across every
+  carrier and brand. Actions: check store readiness and bootstrap it; list
+  credits; show what is expiring; match credits against a booking scenario;
+  add a credit; mark one used; handle errors. Use whenever a question turns on
+  what credits, vouchers, or certificates are on hand — before searching
+  flights, when presenting an itinerary, after a booking, or when an airline
+  grants compensation.
+---
+
+# Using the Travel Credits Inventory
+
+This skill is an action router — pick the step that matches the user's intent
+and execute only that step. Do not run other steps; do not parallelize.
+Explicit chains:
+
+- Steps 3-7 need a ready store — run Step 1 first when readiness is unknown
+- Step 1 exiting `0` continues to the step matching the user's intent
+- Step 1 exiting non-zero continues to Step 8
+- Step 8 chains back exactly once, to Step 2, and only for a missing store
+- Step 2 re-runs Step 1 once, then proceeds or continues to Step 8; it never loops
+- Any step reporting a failure continues to Step 8 (Handle Errors)
+- Every other Step 8 branch finishes without chaining
+
+This skill is the owner of the inventory artifact. Shape changes to the store
+belong to it and to no other skill. The record shape, the writer/reader
+contract, and the migration policy are documented beside it:
+
+```text
+skills/using-travel-credits/state-schema.md
+```
+
+Never hand-edit `inventory.md`. Every write goes through the script.
+
+Run the script as `python3 <path>`. From a consumer repo:
+
+```text
+.tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py
+```
+
+Always pass `--json`. Every subcommand then emits exactly one object on stdout
+and nothing else — bootstrap narration and warnings go to stderr. Read fields
+off that object; never scrape the prose rendering, which exists for the
+interactive human path. A failure emits an object too, carrying an `error` code,
+so branch on that field rather than on stderr text.
+
+Argument contract, filter flags, accepted types, and the full output shape are
+the script's — `--help` on the script and on each subcommand.
+
+## Step 1 — Check Store Readiness
+
+`~/.claude/travel-credits/` must exist as a directory, or a symlink to one. The
+script refuses to run rather than create a second inventory beside the real one.
+
+```bash
+python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py status --json
+```
+
+Branch on the exit code, never on the printed wording:
+
+- `0` — proceed to the step matching the user's intent
+- `3` — no store. Continue to Step 8, then return here
+- `4` — store unusable. Continue to Step 8; do not bootstrap over it
+
+## Step 2 — Bootstrap the Store
+
+Reached from Step 8 after an exit `3`, with the user's choice already made.
+Never pick the choice for them.
+
+```bash
+python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py link --json --path "<dir>"
+```
+
+`link` adopts an inventory that already exists, including one in cloud storage.
+`init --default` creates a fresh store at the default path. `init --path "<dir>"`
+creates one elsewhere and symlinks it back.
+
+Re-run Step 1 once. Exit `0` proceeds to the step matching the user's intent.
+Anything else continues to Step 8 and does not return — a bootstrap that did not
+take is reported, never retried.
+
+## Step 3 — List Credits
+
+```bash
+python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py list --json
+```
+
+Lists active credits only. Narrow with `--passenger`, `--airline`, or `--brand`.
+Report the `credits` entries as given, and say which filters were applied — the
+payload echoes them, so a narrowed list is never presented as the whole store.
+Finish here.
+
+## Step 4 — Show What Is Expiring
+
+```bash
+python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py expiring --json
+```
+
+The window is the script's default, echoed back as `window_days`. Pass `--days`
+only when the user names a different horizon.
+
+Run without a passenger filter before a flight search. Surface each `expiring`
+entry with its deadline. The `no_expiry` entries are a separate list and are not
+a deadline — never fold them into the urgent set. Finish here.
+
+## Step 5 — Match Credits to a Booking Scenario
+
+```bash
+python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py check --json --scenario "<itinerary description>" --passengers "Name One,Name Two"
+```
+
+`--passengers` is one comma-separated string, not repeated flags and not
+space-separated.
+
+Describe the itinerary in the scenario string — airlines, routing, cabin, hotel
+brand. Which credits match, and why, is the script's judgment: quote each
+match's `reasons` rather than re-deriving them. `other_passenger_matches` holds
+credits belonging to family members not on the trip — present it as its own
+callout, never merged into `matches`. Finish here.
+
+## Step 6 — Add a Credit
+
+`--type`, `--description`, and `--value` are the required flags:
+
+```bash
+python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py add --json --type <TYPE> --description "..." --value <amount>
+```
+
+Everything else is optional — add `--passenger`, `--expiry`, `--airline`,
+`--brand`, `--restrictions`, `--confirmation` when the fact is known. Never
+block on a missing optional; a transferable gift card has no passenger and a
+goodwill deposit has no expiry.
+
+`--airline` and `--brand` are independent dimensions, not alternatives. A
+co-branded credit carries both, and each matches its own scenario type in
+Step 5.
+
+Confirm the type against `--help` before writing. The type is recorded verbatim
+and drives Step 5's matching; never infer one from an abbreviation's plain
+reading.
+
+An airline's offer is not a credit until it exists. Add it when the user
+confirms they hold it, never from an alert or a promise. Finish here.
+
+## Step 7 — Mark a Credit Used
+
+```bash
+python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py use --json --id <N> --note "<what it was applied to>"
+```
+
+Marking used moves the row to the archive with a used date. The record survives
+in full — description, case number, issuer, amount — and stays readable as
+prior-compensation history.
+
+There is no reverse subcommand. Confirm with the user that the credit was
+actually applied before writing; a wrong `use` is undone by hand-editing the
+store, which this skill forbids. Finish here.
+
+## Step 8 — Handle Errors
+
+- Exit `3`, no store at the path. Ask the user which bootstrap they want, then
+  continue to Step 2 to run it. Never create one unasked: a store may exist
+  unlinked in cloud storage, and `init` beside it forks the data.
+- Exit `4`, store unusable. The path is a plain file, or a dangling symlink
+  whose target is not mounted. A dangling symlink is never recreated
+  automatically. Report it and stop — remounting or re-linking the real store
+  is the user's action, not this skill's.
+- Unknown `--id` on Step 7. Re-run Step 3 for a current id. Ids belong to the
+  store and are not stable once a record is archived.
+- Rejected `--type` on Step 6. Read `--help` for the accepted set. Never guess
+  from an abbreviation's plain-English reading.
+
+Report the reason in one line. Every branch except exit `3` finishes here.

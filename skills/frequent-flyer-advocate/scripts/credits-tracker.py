@@ -48,6 +48,12 @@ from datetime import datetime, timedelta
 CREDITS_DIR = os.path.join(os.path.expanduser("~"), ".claude", "travel-credits")
 INVENTORY_PATH = os.path.join(CREDITS_DIR, "inventory.md")
 
+# Record shape version, per coding-policy: stateful-artifacts. Records written
+# before versioning carry no field; they read as this version and are stamped on
+# the next rewrite. Bump only alongside a migration in the owner skill
+# (skills/using-travel-credits) — see its state-schema.md.
+SCHEMA_VERSION = 1
+
 VALID_TYPES = ["GUC", "RUC", "COMP", "ECREDIT", "VOUCHER", "PARTNER", "AMEX", "OTHER"]
 
 TYPE_LABELS = {
@@ -602,15 +608,97 @@ def read_inventory():
         return f.read()
 
 
+VERSION_LINE_PREFIX = "- **Schema version**:"
+
+
+def upgrade_record_body(_body_lines, _from_version):
+    """Transform one record's field lines from from_version to from_version + 1.
+
+    Identity today: SCHEMA_VERSION is 1 and no shipped record predates it, so
+    there is no v0 shape to reshape. The step exists so a future bump adds a
+    branch here instead of inventing the migration machinery at that point.
+    """
+    return _body_lines
+
+
+def stamp_schema_version(content):
+    """Bring every record up to SCHEMA_VERSION, per stateful-artifacts Migration Policy.
+
+    Absent version: written before versioning, reads as 1 and is stamped.
+    Older explicit version: upgraded through upgrade_record_body() and restamped.
+    Newer: left untouched — parse_credits() already refuses to consume those, and
+    an owner that cannot read a record must not rewrite it either.
+
+    A text-level edit rather than a parse/reformat round-trip: reformatting the
+    whole store would drop any field the current formatter does not know and
+    rewrite untouched records, so a migration would risk more than it fixes.
+    """
+    lines = content.split("\n")
+    out = []
+    for i, line in enumerate(lines):
+        if line.startswith(VERSION_LINE_PREFIX):
+            stored = line[len(VERSION_LINE_PREFIX):].strip()
+            try:
+                version = int(stored)
+            except ValueError:
+                out.append(line)  # unreadable; parse_credits reports and skips it
+                continue
+            if version > SCHEMA_VERSION:
+                out.append(line)
+                continue
+            while version < SCHEMA_VERSION:
+                upgrade_record_body([], version)
+                version += 1
+            out.append(f"{VERSION_LINE_PREFIX} {SCHEMA_VERSION}")
+            continue
+
+        out.append(line)
+        if line.startswith("### #"):
+            following = lines[i + 1] if i + 1 < len(lines) else ""
+            if not following.startswith(VERSION_LINE_PREFIX):
+                out.append(f"{VERSION_LINE_PREFIX} {SCHEMA_VERSION}")
+    return "\n".join(out)
+
+
 def write_inventory(content):
     require_initialized()
     ensure_inventory()
     with open(INVENTORY_PATH, "w") as f:
-        f.write(content)
+        f.write(stamp_schema_version(content))
+
+
+def is_readable_version(credit):
+    """Whether this script may consume a parsed record.
+
+    A record stamped newer than SCHEMA_VERSION was written by an updated owner.
+    Per coding-policy: stateful-artifacts Migration Policy a lagging reader
+    treats it as no usable prior state and leaves it for that owner, rather
+    than reading it under the wrong shape or rewriting it back down.
+    """
+    raw = credit.get("schema_version")
+    if raw is None:
+        return True  # predates versioning; reads as version 1
+    try:
+        version = int(raw)
+    except ValueError:
+        print(f"WARNING: credit #{credit.get('id')} has an unreadable schema version "
+              f"{raw!r} — skipping it", file=sys.stderr)
+        return False
+    if version > SCHEMA_VERSION:
+        print(f"WARNING: credit #{credit.get('id')} is schema version {version}, newer than "
+              f"this script's {SCHEMA_VERSION} — skipping it. Update the plugin to read it.",
+              file=sys.stderr)
+        return False
+    return True
 
 
 def parse_credits(content, section="active"):
-    """Parse credit entries from the inventory file."""
+    """Parse credit entries from the inventory file.
+
+    Records newer than this script's SCHEMA_VERSION are omitted — see
+    is_readable_version(). Callers that must account for every record
+    regardless of version (next_id) work from the raw content instead.
+    """
     if section == "active":
         start_marker = "<!-- CREDITS_START"
         end_marker = "<!-- CREDITS_END"
@@ -650,12 +738,15 @@ def parse_credits(content, section="active"):
 
     if current:
         credits.append(current)
-    return credits
+    return [c for c in credits if is_readable_version(c)]
 
 
 def format_credit(c):
     """Format a credit entry as markdown."""
     lines = [f"### #{c['id']} — [{c['type']}] {c['description']}"]
+    # Always the current version: parse_credits() only yields records at or below
+    # it, and the owner upgrades what it rewrites.
+    lines.append(f"- **Schema version**: {SCHEMA_VERSION}")
     if "value" in c:
         lines.append(f"- **Value**: {c['value']}")
     if "expiry" in c:
@@ -680,9 +771,13 @@ def format_credit(c):
 
 
 def next_id(content):
-    """Get next available ID from both active and archived credits."""
-    all_ids = [c["id"] for c in parse_credits(content, "active")]
-    all_ids += [c["id"] for c in parse_credits(content, "archive")]
+    """Get next available ID, counting every record in the file.
+
+    Scans headings in the raw content rather than going through parse_credits:
+    that view omits records newer than SCHEMA_VERSION, and an id allocated over
+    one of those would collide with a record this script cannot see.
+    """
+    all_ids = [int(n) for n in re.findall(r"^### #(\d+)", content, re.MULTILINE)]
     return max(all_ids, default=0) + 1
 
 

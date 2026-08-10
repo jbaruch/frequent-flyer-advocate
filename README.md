@@ -12,11 +12,12 @@ tessl install jbaruch/frequent-flyer-advocate
 
 ## What's Included
 
-### Skill
+### Skills
 
 | Skill | Description |
 |-------|-------------|
 | [frequent-flyer-advocate](skills/frequent-flyer-advocate/SKILL.md) | Intake → flight verification → policy research → letter construction for airline service failures (delays, cancellations, baggage, downgrades, denied boarding). Fits the letter to the airline's submission channel and its character limit. Tracks compensation credits and prior complaints across a shared inventory. |
+| [using-travel-credits](skills/using-travel-credits/SKILL.md) | Action router over the shared travel-credits inventory at `~/.claude/travel-credits/`: check store readiness, list, show expiring, match credits to a booking scenario, add, mark used. The invocation surface other plugins call instead of shipping their own copy of the tracker. |
 
 ### Rules
 

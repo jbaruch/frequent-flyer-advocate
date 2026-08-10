@@ -860,6 +860,157 @@ def test_bank_prose_mode_is_unchanged_by_default():
     r = run(BANK, ["list"], home)
     assert "Resolution" in r.stdout and "DL1234" in r.stdout, r.stdout
     assert not r.stdout.lstrip().startswith("{"), "prose mode must not emit JSON"
+# ── schema_version stamping (credits-tracker only) ────────────────────────────
+
+def test_added_credit_carries_schema_version():
+    """Every record written must carry the schema version (stateful-artifacts)."""
+    home = _mktemp("schemaver-")
+    run(CREDITS, ["init", "--default"], home)
+    assert run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Test credit",
+                         "--value", "100.00", "--airline", "DL"], home).returncode == 0
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        text = fh.read()
+    assert "- **Schema version**: 1" in text, f"no schema version stamped:\n{text}"
+
+
+def test_unversioned_record_is_stamped_on_rewrite():
+    """A pre-versioning record reads as v1 and is stamped when the store is rewritten."""
+    home = _mktemp("schemaver-migrate-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Legacy credit",
+                  "--value", "50.00", "--airline", "AA"], home)
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        text = fh.read()
+    # Strip the version line to simulate a record written before versioning.
+    stripped = "\n".join(l for l in text.split("\n") if "**Schema version**" not in l)
+    with open(inventory, "w") as fh:
+        fh.write(stripped)
+    assert "**Schema version**" not in stripped
+
+    # Any write rewrites the store; the legacy record comes back stamped.
+    assert run(CREDITS, ["add", "--type", "VOUCHER", "--desc", "Second credit",
+                         "--value", "25.00", "--airline", "AA"], home).returncode == 0
+    with open(inventory) as fh:
+        after = fh.read()
+    assert after.count("- **Schema version**: 1") == 2, f"legacy record not stamped:\n{after}"
+
+
+def test_newer_schema_version_is_skipped_and_its_id_reserved():
+    """A record newer than this script reads as unusable, and its id is not reused."""
+    home = _mktemp("schemaver-newer-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Readable credit",
+                  "--value", "10.00", "--airline", "DL"], home)
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        text = fh.read()
+    # Simulate a record written by a future owner.
+    text = text.replace("- **Schema version**: 1", "- **Schema version**: 99")
+    with open(inventory, "w") as fh:
+        fh.write(text)
+
+    listed = run(CREDITS, ["list"], home)
+    assert "Readable credit" not in listed.stdout, (
+        f"a newer-versioned record must not be consumed:\n{listed.stdout}")
+
+    added = run(CREDITS, ["add", "--type", "VOUCHER", "--desc", "New credit",
+                          "--value", "20.00", "--airline", "AA"], home)
+    assert added.returncode == 0
+    assert "#2" in added.stdout, (
+        f"id must not be reused over an unreadable record:\n{added.stdout}")
+
+
+def test_older_explicit_version_is_upgraded_on_write():
+    """An explicitly older record is migrated up to SCHEMA_VERSION, not left stale."""
+    home = _mktemp("schemaver-older-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Old-shape credit",
+                  "--value", "15.00", "--airline", "DL"], home)
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        text = fh.read()
+    with open(inventory, "w") as fh:
+        fh.write(text.replace("- **Schema version**: 1", "- **Schema version**: 0"))
+
+    # Any write migrates the store; the stale record comes back at the current version.
+    assert run(CREDITS, ["add", "--type", "VOUCHER", "--desc", "Current credit",
+                         "--value", "5.00", "--airline", "AA"], home).returncode == 0
+    with open(inventory) as fh:
+        after = fh.read()
+    assert "- **Schema version**: 0" not in after, f"stale version survived:\n{after}"
+    assert after.count("- **Schema version**: 1") == 2, f"not upgraded:\n{after}"
+    assert "Old-shape credit" in run(CREDITS, ["list"], home).stdout
+
+
+def test_newer_version_is_not_rewritten_down():
+    """An owner that cannot read a record must not rewrite its version either."""
+    home = _mktemp("schemaver-preserve-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Future credit",
+                  "--value", "15.00", "--airline", "DL"], home)
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        text = fh.read()
+    with open(inventory, "w") as fh:
+        fh.write(text.replace("- **Schema version**: 1", "- **Schema version**: 99"))
+
+    run(CREDITS, ["add", "--type", "VOUCHER", "--desc", "Current credit",
+                  "--value", "5.00", "--airline", "AA"], home)
+    with open(inventory) as fh:
+        after = fh.read()
+    assert "- **Schema version**: 99" in after, f"newer record was downgraded:\n{after}"
+
+
+# ── using-travel-credits router contract ──────────────────────────────────────
+
+ROUTER_SKILL = os.path.normpath(
+    os.path.join(HERE, "..", "..", "using-travel-credits", "SKILL.md"))
+
+# Types the router must not spell out — the accepted set is the script's.
+_SCRIPT_OWNED_TYPES = ["GUC", "RUC", "ECREDIT", "PARTNER", "AMEX"]
+
+
+def _router_invocations():
+    """Every line in the router's SKILL.md that runs the tracker."""
+    with open(ROUTER_SKILL, encoding="utf-8") as fh:
+        lines = fh.read().split("\n")
+    return [ln for ln in lines if "credits-tracker.py" in ln and "python3 " in ln]
+
+
+def test_router_invocations_use_the_plugin_mount_path():
+    # skill-authoring Script References: one path convention per SKILL.md, and it must be
+    # the one that resolves where the skill is invoked. A consumer copies these verbatim.
+    mount = (".tessl/plugins/jbaruch/frequent-flyer-advocate"
+             "/skills/frequent-flyer-advocate/scripts/credits-tracker.py")
+    invocations = _router_invocations()
+    assert invocations, f"no tracker invocations found in {ROUTER_SKILL}"
+    for line in invocations:
+        assert mount in line, f"invocation does not use the mount path:\n  {line.strip()}"
+
+
+def test_router_always_passes_json():
+    # script-delegation Script Requirements: a skill-invoked deterministic script is
+    # JSON-producing. The prose rendering is the interactive human path; an agent that
+    # scrapes it re-introduces the table-parsing the --json contract exists to end.
+    for line in _router_invocations():
+        assert "--json" in line, f"router invocation omits --json:\n  {line.strip()}"
+
+
+def test_router_does_not_restate_the_script_type_vocabulary():
+    # script-as-black-box: the accepted --type set belongs to the script. Copied into the
+    # skill it drifts, and a stale list is how an agent picks a type the script rejects.
+    with open(ROUTER_SKILL, encoding="utf-8") as fh:
+        text = fh.read()
+    leaked = [t for t in _SCRIPT_OWNED_TYPES if t in text]
+    assert not leaked, f"router restates the script's type vocabulary: {leaked}"
+    assert "--help" in text, "router must point at --help for the accepted type set"
 
 
 def main():
