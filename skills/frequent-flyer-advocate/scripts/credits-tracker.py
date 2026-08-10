@@ -612,14 +612,69 @@ def read_inventory():
 VERSION_LINE_PREFIX = "- **Schema version**:"
 
 
-def upgrade_record_body(_body_lines, _from_version):
+def upgrade_record_body(body_lines, _from_version):
     """Transform one record's field lines from from_version to from_version + 1.
+
+    Receives the record's field lines with the version line removed, and returns
+    the replacement set. The caller uses the return value, so a future non-identity
+    upgrade takes effect rather than bumping the version over an untransformed body.
 
     Identity today: SCHEMA_VERSION is 1 and no shipped record predates it, so
     there is no v0 shape to reshape. The step exists so a future bump adds a
     branch here instead of inventing the migration machinery at that point.
     """
-    return _body_lines
+    return body_lines
+
+
+def _indent_of(line):
+    return line[:len(line) - len(line.lstrip())]
+
+
+def migrate_record(heading, body):
+    """Migrate one record's field lines. Returns (new_body, stats).
+
+    Works on the whole record rather than on the line after the heading. The
+    parser accepts `- **Schema version**:` anywhere in a record and keeps the LAST
+    occurrence, so deciding "unversioned" from the following line alone spliced a
+    second version field into a record that already had one further down.
+    """
+    stats = {"stamped": 0, "upgraded": 0, "already_current": 0,
+             "skipped_newer": 0, "unreadable": 0}
+    idxs = [k for k, ln in enumerate(body)
+            if ln.strip().startswith(VERSION_LINE_PREFIX)]
+
+    if not idxs:
+        stats["stamped"] = 1
+        return [f"{_indent_of(heading)}{VERSION_LINE_PREFIX} {SCHEMA_VERSION}"] + body, stats
+
+    # parse_credits() overwrites on each field line, so the last occurrence wins.
+    try:
+        version = int(body[idxs[-1]].strip()[len(VERSION_LINE_PREFIX):].strip())
+    except ValueError:
+        stats["unreadable"] = 1
+        return body, stats
+
+    if version > SCHEMA_VERSION:
+        stats["skipped_newer"] = 1
+        return body, stats
+
+    keep = idxs[0]
+    if version == SCHEMA_VERSION:
+        stats["already_current"] = 1
+        if len(idxs) == 1:
+            return body, stats  # verbatim — a spacing difference is not a migration
+        # Duplicate version fields make the record's version order-dependent.
+        # Collapse to one canonical line at the first position.
+        collapsed = [f"{_indent_of(body[keep])}{VERSION_LINE_PREFIX} {SCHEMA_VERSION}"]
+        collapsed += [ln for k, ln in enumerate(body) if k not in set(idxs)]
+        return collapsed, stats
+
+    stats["upgraded"] = 1
+    fields = [ln for k, ln in enumerate(body) if k not in set(idxs)]
+    while version < SCHEMA_VERSION:
+        fields = upgrade_record_body(fields, version)
+        version += 1
+    return [f"{_indent_of(body[keep])}{VERSION_LINE_PREFIX} {SCHEMA_VERSION}"] + fields, stats
 
 
 def stamp_schema_version(content):
@@ -643,48 +698,25 @@ def stamp_schema_version(content):
              "skipped_newer": 0, "unreadable": 0}
     lines = content.split("\n")
     out = []
-    for i, line in enumerate(lines):
-        # Recognize a line exactly as parse_credits() does — it strips before
-        # matching, so anchoring on column zero here made the two disagree: an
-        # indented version line was invisible to migration and visible to the
-        # parser, and migrate then reported a store "wholly readable" that the
-        # parser went on to reject. The indent is preserved on re-emit.
-        stripped = line.strip()
-        indent = line[:len(line) - len(line.lstrip())]
-
-        if stripped.startswith(VERSION_LINE_PREFIX):
-            stored = stripped[len(VERSION_LINE_PREFIX):].strip()
-            try:
-                version = int(stored)
-            except ValueError:
-                stats["unreadable"] += 1
-                out.append(line)  # unreadable; parse_credits reports and skips it
-                continue
-            if version > SCHEMA_VERSION:
-                stats["skipped_newer"] += 1
-                out.append(line)
-                continue
-            if version == SCHEMA_VERSION:
-                # Emit the line verbatim rather than a canonical rewrite. A record
-                # already at the current version needs no migration, and re-rendering
-                # it would report changed: true for a difference in spacing alone —
-                # breaking the idempotence the owner's pre-read run depends on.
-                stats["already_current"] += 1
-                out.append(line)
-                continue
-            stats["upgraded"] += 1
-            while version < SCHEMA_VERSION:
-                upgrade_record_body([], version)
-                version += 1
-            out.append(f"{indent}{VERSION_LINE_PREFIX} {SCHEMA_VERSION}")
+    i, n = 0, len(lines)
+    while i < n:
+        # A heading is recognized exactly as parse_credits() recognizes it — that
+        # strips first, so anchoring on column zero made the two disagree and an
+        # indented record went unmigrated while still being parsed.
+        if not lines[i].strip().startswith("### #"):
+            out.append(lines[i])
+            i += 1
             continue
-
-        out.append(line)
-        if stripped.startswith("### #"):
-            following = lines[i + 1].strip() if i + 1 < len(lines) else ""
-            if not following.startswith(VERSION_LINE_PREFIX):
-                stats["stamped"] += 1
-                out.append(f"{indent}{VERSION_LINE_PREFIX} {SCHEMA_VERSION}")
+        heading = lines[i]
+        j = i + 1
+        while j < n and not lines[j].strip().startswith("### #"):
+            j += 1
+        new_body, record_stats = migrate_record(heading, lines[i + 1:j])
+        for key, value in record_stats.items():
+            stats[key] += value
+        out.append(heading)
+        out.extend(new_body)
+        i = j
     return "\n".join(out), stats
 
 

@@ -1111,6 +1111,95 @@ def test_next_id_counts_an_indented_record():
     assert added["added"]["id"] == 2, f"id reissued over an indented record: {added}"
 
 
+def test_migrate_finds_a_version_field_anywhere_in_the_record():
+    """The parser accepts the field anywhere in a record; migration must agree.
+
+    Deciding "unversioned" from the line after the heading alone spliced a second
+    version field into a record that already carried one further down, leaving the
+    record's version order-dependent.
+    """
+    home = _mktemp("schemaver-late-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Late version field",
+                  "--value", "10.00"], home)
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        lines = fh.read().split("\n")
+    vi = next(k for k, l in enumerate(lines) if l.startswith("- **Schema version**"))
+    lines.insert(vi + 1, lines.pop(vi))  # push it below the next field
+    with open(inventory, "w") as fh:
+        fh.write("\n".join(lines))
+
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+    assert payload["stamped"] == 0, f"a second version field was spliced in: {payload}"
+    assert payload["already_current"] == 1, payload
+    assert payload["changed"] is False, payload
+
+    with open(inventory) as fh:
+        after = fh.read()
+    assert after.count("**Schema version**") == 1, f"duplicate version field:\n{after}"
+    assert _json_out(run(CREDITS, ["list", "--json"], home))["count"] == 1
+
+
+def test_migrate_collapses_duplicate_version_fields():
+    """Two version fields make a record's version depend on read order — repair it."""
+    home = _mktemp("schemaver-dup-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Duplicated", "--value", "10.00"], home)
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        text = fh.read()
+    with open(inventory, "w") as fh:
+        fh.write(text.replace("- **Schema version**: 1",
+                              "- **Schema version**: 1\n- **Schema version**: 1"))
+
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+    assert payload["changed"] is True, payload
+
+    with open(inventory) as fh:
+        after = fh.read()
+    assert after.count("**Schema version**") == 1, f"duplicates survived:\n{after}"
+    assert _json_out(run(CREDITS, ["list", "--json"], home))["count"] == 1
+
+
+def _load_tracker():
+    """Import credits-tracker.py by path — its filename has a hyphen."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("credits_tracker", CREDITS)
+    assert spec is not None and spec.loader is not None, f"cannot load {CREDITS}"
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_upgrade_record_body_return_value_is_applied():
+    """A future non-identity upgrade must actually transform the body.
+
+    The upgrade step's return was discarded, so a SCHEMA_VERSION > 1 rollout would
+    have bumped every record's version line over an untransformed body — the exact
+    silent-corruption the version exists to make auditable.
+    """
+    tracker = _load_tracker()
+    # setattr, not attribute assignment: the module is loaded by path, so a static
+    # checker has no declaration to bind these names to.
+    setattr(tracker, "SCHEMA_VERSION", 2)
+    setattr(tracker, "upgrade_record_body", lambda body, _v: body + ["- **Added by v2**: yes"])
+
+    store = ("<!-- CREDITS_START -->\n"
+             "### #1 — [ECREDIT] Old shape\n"
+             "- **Schema version**: 1\n"
+             "- **Value**: 10.00\n"
+             "<!-- CREDITS_END -->\n")
+    migrated, stats = tracker.stamp_schema_version(store)
+
+    assert stats["upgraded"] == 1, stats
+    assert "- **Added by v2**: yes" in migrated, f"upgrade output discarded:\n{migrated}"
+    assert "- **Schema version**: 2" in migrated, migrated
+    assert migrated.count("**Schema version**") == 1, migrated
+
+
 def test_migrate_reports_an_unparseable_version_line():
     """A version line that is not an integer is counted, not silently swallowed.
 
