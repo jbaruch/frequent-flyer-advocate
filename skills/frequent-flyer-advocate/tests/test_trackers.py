@@ -679,6 +679,42 @@ def test_prose_remains_the_default():
     raise AssertionError("default output should be prose, not JSON")
 
 
+def test_invalid_expiry_rejected_before_any_write():
+    """A malformed --expiry fails cleanly and leaves the inventory untouched."""
+    home = _mktemp("json-expiry-")
+    run(CREDITS, ["init", "--default"], home)
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        before = fh.read()
+
+    res = run(CREDITS, ["add", "--json", "--type", "ECREDIT", "--desc", "Bad date",
+                        "--value", "10.00", "--expiry", "not-a-date"], home)
+    assert res.returncode == 1, f"expected a clean failure, got {res.returncode}"
+    assert _json_out(res)["error"] == "invalid_expiry"
+    assert "Traceback" not in res.stderr, f"died in a traceback:\n{res.stderr}"
+
+    with open(inventory) as fh:
+        after = fh.read()
+    assert after == before, "a rejected credit must not reach the store"
+    assert "Bad date" not in after
+
+
+def test_invalid_expiry_rejected_in_prose_mode_too():
+    """The same guard holds without --json; the store is not mutated either way."""
+    home = _mktemp("prose-expiry-")
+    run(CREDITS, ["init", "--default"], home)
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        before = fh.read()
+
+    res = run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Bad date",
+                        "--value", "10.00", "--expiry", "2026-13-45"], home)
+    assert res.returncode == 1
+    assert "Traceback" not in res.stderr
+    with open(inventory) as fh:
+        assert fh.read() == before
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

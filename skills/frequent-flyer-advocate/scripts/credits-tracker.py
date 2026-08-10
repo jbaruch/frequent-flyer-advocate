@@ -10,8 +10,8 @@ tracked too so nothing expires forgotten. A credit is tagged with --airline (air
 and/or --brand (hotel/loyalty-program issuer); both filter and surface independently.
 
 Every subcommand takes --json, which replaces the prose rendering with a single
-JSON object on stdout (diagnostics stay on stderr). Agents invoking this script
-through skills/using-travel-credits always pass it; prose is the human default.
+JSON object on stdout (diagnostics stay on stderr). Agent callers pass it; prose
+is the interactive human default.
 
 Usage:
   python3 credits-tracker.py init [--default | --path DIR] [--json]   # set up new storage
@@ -829,6 +829,20 @@ def cmd_add(args):
             emit_json({"error": "invalid_type", "given": ctype, "valid": VALID_TYPES})
         sys.exit(1)
 
+    # Validate before touching storage. Parsing this after the write persisted the
+    # credit and then died in a traceback, leaving a malformed record behind.
+    expiry_date = None
+    if args.expiry:
+        try:
+            expiry_date = datetime.strptime(args.expiry, "%Y-%m-%d").date()
+        except ValueError:
+            print(f"ERROR: Invalid --expiry '{args.expiry}'. Expected YYYY-MM-DD.",
+                  file=sys.stderr)
+            if args.json:
+                emit_json({"error": "invalid_expiry", "given": args.expiry,
+                           "expected_format": "YYYY-MM-DD"})
+            sys.exit(1)
+
     cid = next_id(content)
     credit = {
         "id": cid,
@@ -855,9 +869,8 @@ def cmd_add(args):
     write_inventory(content)
 
     days_to_expiry = None
-    if args.expiry:
-        exp = datetime.strptime(args.expiry, "%Y-%m-%d").date()
-        days_to_expiry = (exp - datetime.now().date()).days
+    if expiry_date:
+        days_to_expiry = (expiry_date - datetime.now().date()).days
 
     if args.json:
         emit_json({"added": credit, "days_to_expiry": days_to_expiry})
@@ -1258,9 +1271,8 @@ Examples:
   %(prog)s summary --passenger baruch        Just Baruch
         """,
     )
-    # Inherited by every subcommand so `<cmd> --json` works uniformly. Agents
-    # invoking this script through skills/using-travel-credits always pass it;
-    # the prose default is the interactive human path.
+    # Inherited by every subcommand so `<cmd> --json` works uniformly. Agent
+    # callers pass it; the prose default is the interactive human path.
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--json", action="store_true",
                         help="Emit a JSON object on stdout instead of prose")
