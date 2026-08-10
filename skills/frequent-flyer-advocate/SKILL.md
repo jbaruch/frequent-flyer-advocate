@@ -202,8 +202,9 @@ complete verification procedure. Key points:
 6. **Use verified data in the letter** — FlightAware's timestamps, delay duration, and
    cancellation records are independent evidence that strengthens the complaint.
 
-Do NOT proceed to Step 7 until the flight is verified or the user explicitly confirms the
-details are correct despite any discrepancies. Once verified, proceed immediately to Step 7.
+Do NOT proceed to Step 7 on unverified details. Where FlightAware and the user's account
+conflict, ask the user which is correct and take their explicit confirmation as the
+resolution. Once the flight is verified or confirmed, proceed immediately to Step 7.
 
 ---
 
