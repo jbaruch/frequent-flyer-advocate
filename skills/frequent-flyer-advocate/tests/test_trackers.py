@@ -69,8 +69,21 @@ STORES = [
 ]
 
 
-def run(script, args, home, cwd=None, stdin_text=None):
+# Frozen reference date for every date-sensitive case. testing-standards Determinism
+# bans a value that depends on the run-time clock, and a fixture pinning a future date
+# only moves the deadline — it starts failing on its own once the real clock passes it.
+# credits-tracker.py reads TODAY_ENV instead of the wall clock, so the fixtures below
+# can use fixed PAST dates and still exercise "expires soon".
+FROZEN_TODAY = "2026-03-01"
+
+
+def run(script, args, home, cwd=None, stdin_text=None,
+        today: "str | None" = FROZEN_TODAY):
     env = dict(os.environ, HOME=home)
+    if today is None:
+        env.pop("CREDITS_TRACKER_TODAY", None)   # unset: the production path
+    else:
+        env["CREDITS_TRACKER_TODAY"] = today     # set, including to "" on purpose
     return subprocess.run(
         [sys.executable, script, *args],
         env=env, cwd=cwd, capture_output=True, text=True, input=stdin_text,
@@ -334,10 +347,10 @@ def _seeded_home_with_hotel_and_airline_credits():
     home = fresh_home()
     assert run(CREDITS, ["init", "--default"], home).returncode == 0
     assert run(CREDITS, ["add", "--type", "VOUCHER", "--desc", "Comp 2-night stay",
-                         "--value", "2 nights", "--expiry", "2027-03-31",
+                         "--value", "2 nights", "--expiry", "2026-03-31",
                          "--passenger", "Baruch", "--brand", "Hilton"], home).returncode == 0
     assert run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Canceled BNA-JFK",
-                         "--value", "347.20", "--expiry", "2027-12-15",
+                         "--value", "347.20", "--expiry", "2026-06-15",
                          "--passenger", "Baruch", "--airline", "DL"], home).returncode == 0
     return home
 
@@ -1408,6 +1421,99 @@ def test_update_reaches_a_deposit_but_still_refuses_an_expiry():
     r = run(CREDITS, ["update", "--json", "--id", "1", "--expiry", "2024-01-01"], home)
     assert r.returncode != 0
     assert _json_out(r)["error"] == "expiry_not_valid_for_deposit", r.stdout
+
+
+# ── the clock seam ────────────────────────────────────────────────────────────
+
+def test_expiry_decisions_read_the_injected_reference_not_the_wall_clock():
+    """The seam every date-sensitive fixture depends on.
+
+    Without it a fixture has to pin a date ahead of the real clock, which only moves
+    the deadline — it starts failing on its own once the clock passes it.
+    """
+    home = _mktemp("clock-seam-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--json", "--type", "ECREDIT", "--desc", "Expires mid-2026",
+                  "--value", "100.00", "--expiry", "2026-06-15"], home)
+
+    # Frozen before the expiry: live, and inside a 120-day window.
+    early = _json_out(run(CREDITS, ["expiring", "--json", "--days", "120"], home,
+                          today="2026-03-01"))
+    assert [e["id"] for e in early["expiring"]] == [1], early
+    assert early["as_of"] == "2026-03-01", "the payload must report the injected date"
+    assert early["expiring"][0]["expired"] is False, early
+    assert early["expiring"][0]["days_left"] > 0, early
+
+    # Frozen after it: the same record now reads as expired against the same window.
+    late = _json_out(run(CREDITS, ["expiring", "--json", "--days", "120"], home,
+                         today="2026-07-01"))
+    assert late["as_of"] == "2026-07-01", late
+    assert late["expiring"][0]["expired"] is True, late
+    assert late["expiring"][0]["days_left"] < 0, late
+
+    listed = _json_out(run(CREDITS, ["list", "--json"], home, today="2026-07-01"))
+    assert listed["credits"][0]["expired"] is True, listed
+    assert _json_out(run(CREDITS, ["list", "--json"], home,
+                         today="2026-03-01"))["credits"][0]["expired"] is False
+
+
+def test_a_malformed_reference_date_is_fatal_not_ignored():
+    """Falling back to the wall clock would let a suite that meant to freeze time
+    run against the real one and pass for the wrong reason."""
+    home = _mktemp("clock-bad-")
+    run(CREDITS, ["init", "--default"], home)
+    r = run(CREDITS, ["list", "--json"], home, today="March 2026")
+    assert r.returncode == 2, f"expected a hard exit, got {r.returncode}: {r.stdout}{r.stderr}"
+    assert "CREDITS_TRACKER_TODAY" in r.stderr, r.stderr
+    assert "not be ignored" in r.stderr, r.stderr
+    # The failure still owes the caller one JSON object — an empty stdout reads as a
+    # crash, which is the contract 0.9.27 established for every other failure path.
+    payload = _json_out(r)
+    assert payload["error"] == "invalid_reference_date", payload
+    assert payload["given"] == "March 2026", payload
+
+    # An explicitly empty value is a misconfiguration, not an absence. Falling back to
+    # the wall clock there would be the silent fallback this whole guard refuses.
+    empty = run(CREDITS, ["list", "--json"], home, today="")
+    assert empty.returncode == 2, f"an empty override must not read as unset: {empty.stdout}"
+    assert _json_out(empty)["error"] == "invalid_reference_date", empty.stdout
+
+    # And it must not break --help, which needs no reference date at all.
+    helped = run(CREDITS, ["--help"], home, today="March 2026")
+    assert helped.returncode == 0, f"--help must not require a valid override:\n{helped.stderr}"
+
+
+def test_the_reference_date_falls_through_to_the_module_clock_when_unset():
+    """Unset is the production path — it must reach the clock, not a frozen default.
+
+    Asserted against a stubbed clock rather than the real one: comparing to
+    `date.today()` at assertion time is itself a wall-clock dependency, and it races
+    the subprocess across midnight.
+    """
+    import datetime
+
+    class _FixedClock:
+        @staticmethod
+        def now():
+            return datetime.datetime(2019, 7, 4, 12, 0, 0)
+
+        @staticmethod
+        def strptime(value, fmt):
+            return datetime.datetime.strptime(value, fmt)
+
+    tracker = _load_tracker()
+    setattr(tracker, "datetime", _FixedClock)
+    saved = os.environ.pop(tracker.TODAY_ENV, None)
+    try:
+        assert tracker.reference_date() == datetime.date(2019, 7, 4), \
+            "unset must fall through to the module's clock"
+        # And the override still wins over it.
+        os.environ[tracker.TODAY_ENV] = "2020-01-02"
+        assert tracker.reference_date() == datetime.date(2020, 1, 2)
+    finally:
+        os.environ.pop(tracker.TODAY_ENV, None)
+        if saved is not None:
+            os.environ[tracker.TODAY_ENV] = saved
 
 
 # ── line-oriented store: no value may become structure ────────────────────────
