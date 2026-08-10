@@ -48,11 +48,12 @@ from datetime import datetime, timedelta
 CREDITS_DIR = os.path.join(os.path.expanduser("~"), ".claude", "travel-credits")
 INVENTORY_PATH = os.path.join(CREDITS_DIR, "inventory.md")
 
-# Record shape version, per coding-policy: stateful-artifacts. Records written
-# before versioning carry no field and read as this version. They are stamped by
-# the `migrate` subcommand, never by an ordinary write — migration belongs to the
-# owner skill alone (see write_inventory() and cmd_migrate()). Bump only
-# alongside a migration in skills/using-travel-credits — see its state-schema.md.
+# Record shape version, per coding-policy: stateful-artifacts, which puts one on
+# every record. A record carrying no version field is not consumed — see
+# is_readable_version(). The `migrate` subcommand stamps it; no ordinary write
+# does, because migration belongs to the owner skill alone (see write_inventory()
+# and cmd_migrate()). Bump only alongside a migration in
+# skills/using-travel-credits — see its state-schema.md.
 SCHEMA_VERSION = 1
 
 VALID_TYPES = ["GUC", "RUC", "COMP", "ECREDIT", "VOUCHER", "PARTNER", "AMEX", "OTHER"]
@@ -769,13 +770,18 @@ def is_readable_version(credit):
       the wrong shape, nor rewrite it back down.
     - Older: the owner has not upgraded it yet. A non-owner must not migrate, so
       it declines the record and leaves it for the owner's `migrate` run.
-
-    A record with no version line predates versioning and reads as version 1 —
-    documented compatibility, not an off-version record.
+    - Absent: stateful-artifacts Required Attributes puts a schema_version on
+      every record, so a record without one has no auditable shape and a reader
+      cannot know what it is holding. Declined like any other off-version record.
+      `migrate` stamps it and it reads normally afterwards — the owner router runs
+      that ahead of every read, so a pre-versioning store heals on first use.
     """
     raw = credit.get("schema_version")
     if raw is None:
-        return True  # predates versioning; reads as version 1
+        print(f"WARNING: credit #{credit.get('id')} carries no schema version — skipping it. "
+              f"Run `migrate` from skills/using-travel-credits to stamp the store.",
+              file=sys.stderr)
+        return False
     try:
         version = int(raw)
     except ValueError:

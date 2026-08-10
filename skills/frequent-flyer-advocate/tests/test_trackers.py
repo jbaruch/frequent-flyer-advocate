@@ -934,6 +934,32 @@ def test_migrate_stamps_records_written_before_versioning():
     assert "Legacy one" in after and "Legacy two" in after
 
 
+def test_an_unversioned_record_is_not_consumed_until_migrated():
+    """stateful-artifacts puts a schema_version on every record.
+
+    Without one a reader cannot know the record's shape, so it declines it rather
+    than guessing — and the owner's migrate is what makes it readable. The router
+    runs migrate ahead of every read, so a pre-versioning store heals on first use.
+    """
+    home = _mktemp("schemaver-absent-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Pre-versioning credit",
+                  "--value", "20.00", "--airline", "DL"], home)
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    _strip_versions(inventory)
+
+    listed = run(CREDITS, ["list", "--json"], home)
+    assert _json_out(listed)["count"] == 0, "an unversioned record must not be consumed"
+    assert "no schema version" in listed.stderr, listed.stderr
+    assert "migrate" in listed.stderr, "the warning must name the recovery"
+
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+    assert payload["stamped"] == 1, payload
+    assert payload["unconsumable"] == 0, payload
+    assert _json_out(run(CREDITS, ["list", "--json"], home))["count"] == 1
+
+
 def test_migrate_is_idempotent():
     """A store already current is left byte-identical and reports no change."""
     home = _mktemp("schemaver-idem-")
