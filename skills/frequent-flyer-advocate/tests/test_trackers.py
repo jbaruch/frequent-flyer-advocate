@@ -1001,6 +1001,33 @@ def test_migrate_upgrades_an_explicitly_older_version():
     assert "Old-shape credit" in run(CREDITS, ["list"], home).stdout
 
 
+def test_migrate_reports_an_unparseable_version_line():
+    """A version line that is not an integer is counted, not silently swallowed.
+
+    The router branches on this field to stop rather than present a partial
+    inventory, so the count has to be real.
+    """
+    home = _mktemp("schemaver-garbage-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--type", "ECREDIT", "--desc", "Hand-edited credit",
+                  "--value", "15.00", "--airline", "DL"], home)
+
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        text = fh.read()
+    with open(inventory, "w") as fh:
+        fh.write(text.replace("- **Schema version**: 1", "- **Schema version**: v1-ish"))
+
+    payload = _json_out(run(CREDITS, ["migrate", "--json"], home))
+    assert payload["unreadable"] == 1, payload
+
+    with open(inventory) as fh:
+        assert "- **Schema version**: v1-ish" in fh.read(), "must not be guessed at"
+
+    listed = _json_out(run(CREDITS, ["list", "--json"], home))
+    assert listed["count"] == 0, f"an unreadable record must not be consumed: {listed}"
+
+
 def test_migrate_does_not_rewrite_a_newer_record_down():
     """An owner that cannot read a record must not rewrite its version either."""
     home = _mktemp("schemaver-preserve-")

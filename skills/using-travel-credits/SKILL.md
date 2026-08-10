@@ -24,6 +24,9 @@ Explicit chains:
 - Steps 4-8 run Step 3 first: this skill owns the record shape, so it migrates
   what it is about to read or write. Step 3 is idempotent, so on a current store
   this costs one call and changes nothing
+- Step 3 continues to the calling step only when the store is wholly readable.
+  Records it could not consume mean every later command returns a subset, so it
+  continues to Step 9 and stops instead
 - Step 3 invoked directly, because the user asked to migrate, finishes there
 - Step 9 chains back exactly once, to Step 2, and only for a missing store
 - Step 2 re-runs Step 1 once, then proceeds or continues to Step 9; it never loops
@@ -67,7 +70,7 @@ python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-adv
 
 Branch on the exit code, never on the printed wording:
 
-- `0` — proceed to the step matching the user's intent
+- `0` — continue to Step 3, and from there to the step matching the user's intent
 - `3` — no store. Continue to Step 9, then return here
 - `4` — store unusable. Continue to Step 9; do not bootstrap over it
 
@@ -84,9 +87,9 @@ python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-adv
 `init --default` creates a fresh store at the default path. `init --path "<dir>"`
 creates one elsewhere and symlinks it back.
 
-Re-run Step 1 once. Exit `0` proceeds to the step matching the user's intent.
-Anything else continues to Step 9 and does not return — a bootstrap that did not
-take is reported, never retried.
+Re-run Step 1 once. Exit `0` continues to Step 3, and from there to the step
+matching the user's intent. Anything else continues to Step 9 and does not
+return — a bootstrap that did not take is reported, never retried.
 
 ## Step 3 — Migrate the Store
 
@@ -108,12 +111,18 @@ runs.
 Idempotent: a store already current reports `changed: false` and is not
 rewritten, so running it ahead of every read costs one call.
 
-`skipped_newer` above zero means records were written by a newer version of this
-plugin than the one installed. Those are left alone by design — report the count
-and say the plugin needs updating to read them.
+Then gate on the payload. `skipped_newer` and `unreadable` count records this
+script cannot consume — `skipped_newer` were written by a newer version of the
+plugin, `unreadable` carry a version line that does not parse. Migration leaves
+both alone by design, and every later command omits them.
 
-Reached from Steps 4-8, continue to the step that called it. Invoked directly
-because the user asked to migrate, report the counts and finish here.
+- Both zero — the store is wholly readable. Reached from Steps 4-8, continue to
+  the step that called it. Invoked directly because the user asked to migrate,
+  report the counts and finish here
+- Either above zero — continue to Step 9 and stop. Do not fall through to the
+  calling step: `list`, `expiring`, and `check` would return a subset while
+  reading as the whole store, and `add` would write against an inventory it
+  cannot fully see
 
 ## Step 4 — List Credits
 
@@ -211,8 +220,14 @@ store, which this skill forbids. Finish here.
   whose target is not mounted. A dangling symlink is never recreated
   automatically. Report it and stop — remounting or re-linking the real store
   is the user's action, not this skill's.
-- Records omitted as newer than this script. Report that the plugin is behind
-  the store and stop. Step 3 does not fix this; it leaves those records alone.
+- Step 3 reported `skipped_newer` above zero. Records were written by a newer
+  version of this plugin than the one installed. Report the count, say the
+  plugin needs updating to read them, and stop. Step 3 does not fix this and
+  neither does re-running it.
+- Step 3 reported `unreadable` above zero. A record's version line does not
+  parse as an integer, which means the store was hand-edited or truncated.
+  Report the count and stop. Repairing it is the user's action — this skill
+  will not guess at the intended version.
 - Unknown `--id` on Step 8. Re-run Step 4 for a current id. Ids belong to the
   store and are not stable once a record is archived.
 - Rejected `--type` on Step 7. Read `--help` for the accepted set. Never guess
