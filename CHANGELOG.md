@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.9.37 — 2026-08-10
+
 ### Added
 
 - `complaints-bank.py update` corrects a filed complaint's fields. Resolves #43.
