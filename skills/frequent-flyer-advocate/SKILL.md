@@ -29,7 +29,11 @@ grounded in the airline's own published policies, vision statements, and federal
 - Pass `--json` on every call from this skill
 - Read the returned fields; never parse the prose rendering
 - Diagnostics go to stderr; stdout carries one JSON object, failures included
-- [scripts/complaints-bank.py](scripts/complaints-bank.py) — past complaint history for pattern detection (shared globally via `~/.claude/complaint-bank/`). Run with full path: `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py`
+- [scripts/complaints-bank.py](scripts/complaints-bank.py) — past complaint history for pattern detection, shared globally via `~/.claude/complaint-bank/`
+- Run it with the full path: `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py`
+- Pass `--json` on every call from this skill
+- Read the returned fields; never parse the prose rendering
+- Diagnostics go to stderr; stdout carries one JSON object, failures included
 
 ---
 
@@ -55,9 +59,9 @@ bootstrap if missing:
 ```bash
 # Each store's `status` subcommand owns the readiness contract (no shell logic here):
 # exits 0 / 3 / 4 for ready / missing / invalid.
-# credits-tracker reports {"state", "store", "reason"}; branch on the exit code.
+# Both report {"state", "store", "reason"}; branch on the exit code.
 python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py status --json
-python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py status
+python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py status --json
 ```
 
 For each store reported `MISSING` (or `INVALID`), ask the user (via `AskUserQuestion`) whether they already
@@ -89,9 +93,11 @@ immediately to Step 2.
 ## Step 2 — Resolve Pending Complaints
 
 Run:
-`python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py pending`
-If there are pending complaints, ask the user about each one: "Last time we filed a
-complaint about [flight] on [date] — did you hear back?" Record the resolution with
+`python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py pending --json`
+The response carries `pending` (each complaint's fields) and `count`. A `count` of 0 is a
+valid answer, not a failure. If there are pending complaints, ask the user about each one:
+"Last time we filed a complaint about [flight] on [date] — did you hear back?" Record the
+resolution with
 `resolve --id <id> --resolution <STATUS> --note "..."`. Use RESOLVED, PARTIAL, DENIED,
 or ESCALATED if they have an update. Use CLOSED if they never heard back or don't want
 to track it further. If the resolution included credits, miles, or vouchers, also log
@@ -180,10 +186,12 @@ Proceed immediately to Step 5.
 ## Step 5 — Check Complaint History
 
 Run:
-`python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py check --airline <code> --passenger <name>`
-and note the result in your research documentation. If patterns exist (same category 2+
-times, prior DENIED complaints, same route recurring), hold them for Step 8 — see the
-complaint-patterns rule for when to use them and when not to.
+`python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py check --json --airline <code> --passenger <name>`
+The response carries `count`, `matches`, `category_patterns` and `secondary_patterns` (the
+groups of 2+ the script already judged), `resolutions`, `denied_count`, and `recurring`.
+Read those fields rather than recounting. Note the result in your research documentation,
+and hold any pattern for Step 8 — see the complaint-patterns rule for when to use them and
+when not to.
 
 Proceed immediately to Step 6.
 
@@ -420,12 +428,12 @@ Step 11.
 ## Step 11 — File the Complaint to the Bank
 
 After the letter is finalized, always file it:
-`python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py file --airline <code> --flight <flight> --flight-date <YYYY-MM-DD> --route <ORIG-DEST> --passenger <name> --category <CAT> --severity <SEV> --summary "<1-2 sentences>" --outcome "<what was requested>"`
+`python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py file --json --airline <code> --flight <flight> --flight-date <YYYY-MM-DD> --route <ORIG-DEST> --passenger <name> --category <CAT> --severity <SEV> --summary "<1-2 sentences>" --outcome "<what was requested>"`
 
 If the user returns with a compensation outcome, log it in both systems:
 `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py add --json --type VOUCHER --description "..." --value <amount> --passenger "..." --airline <code> --expiry <date> --restrictions "..."`
 Returns `{"added": {…the stored record…}, "days_to_expiry": <int|null>}`. On a bad `--expiry` it returns
 `{"error": "invalid_expiry", …}`, exits non-zero, and writes nothing — re-ask for the date rather than retrying.
-`python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py resolve --id <id> --resolution <RESOLVED|PARTIAL|DENIED> --note "<what they got>"`
+`python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py resolve --json --id <id> --resolution <RESOLVED|PARTIAL|DENIED> --note "<what they got>"`
 
 Finish here.
