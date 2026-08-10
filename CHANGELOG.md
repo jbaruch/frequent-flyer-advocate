@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.9.35 — 2026-08-10
+
 ### Fixed
 
 - Schema v4 relocates miles and points grants stranded in the archive. v2 made this correction for Active only, so a grant already marked used was never classified by its `Value`, reached v3 still typed `COMP`, and came out `COMPANION` — the one outcome v3's own note rules out. Found in a live store, where two SkyMiles bonuses read as spendable Delta credits and were marked used during an unrelated drain.
