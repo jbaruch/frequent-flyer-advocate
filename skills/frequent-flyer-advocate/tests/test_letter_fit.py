@@ -439,17 +439,12 @@ def test_every_reference_is_reachable_and_every_link_resolves():
     on_disk = {f for f in os.listdir(references) if f.endswith(".md")}
     assert on_disk, "no reference files found — the check would pass vacuously"
 
-    with open(os.path.join(skill_dir, "SKILL.md"), encoding="utf-8") as f:
-        skill = f.read()
-    orphans = [f for f in sorted(on_disk) if f"references/{f}" not in skill]
-    assert not orphans, f"reference files nothing links to: {orphans}"
-
     # Resolve each link relative to the file it sits in, not to the skill root. A link
     # copied from SKILL.md into a reference keeps its `references/` prefix and then
     # points at references/references/… — which a root-relative check cannot see.
     surfaces = [os.path.join(skill_dir, "SKILL.md")]
     surfaces += sorted(os.path.join(references, f) for f in on_disk)
-    broken, checked = [], 0
+    broken, checked, linked_from_skill = [], 0, set()
     for path in surfaces:
         with open(path, encoding="utf-8") as f:
             text = f.read()
@@ -458,8 +453,17 @@ def test_every_reference_is_reachable_and_every_link_resolves():
             target = os.path.normpath(os.path.join(os.path.dirname(path), link))
             if not os.path.isfile(target):
                 broken.append(f"{os.path.basename(path)} -> {link}")
+                continue
+            if os.path.basename(path) == "SKILL.md" \
+                    and os.path.dirname(target) == references:
+                linked_from_skill.add(os.path.basename(target))
     assert checked, "no markdown links found — the check would pass vacuously"
     assert not broken, f"links that do not resolve from their own file: {broken}"
+
+    # Reachability is asserted from resolved link destinations, not from the filename
+    # appearing somewhere in the text — prose mentioning a reference is not a link to it.
+    orphans = sorted(on_disk - linked_from_skill)
+    assert not orphans, f"reference files SKILL.md does not link to: {orphans}"
 
 
 def test_skill_invocations_use_the_plugin_mount_path():
