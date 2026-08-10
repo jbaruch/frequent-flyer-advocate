@@ -379,10 +379,8 @@ After presenting the letter, provide actionable next steps:
 **Where to send:**
 - Check the airline's recorded channels first:
   `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/letter-fit.py --airline <code> --info`
-- Its `metadata.channel_notes` field reports known-dead or deprioritized channels. Where a
-  channel is recorded as unreliable, route around it rather than sending the letter into it
-  — AA's executive customer-relations email is the recorded case: web form first, paper mail
-  to the executive office for escalation.
+- Follow `metadata.channel_notes` for that airline. It names known-dead or deprioritized
+  channels and the routing to use instead. Route around a channel it reports unreliable.
 - Primary (no note to the contrary): executive customer relations email found during research
 - Secondary: standard customer care (backup/paper trail)
 - Include any airline-specific submission forms

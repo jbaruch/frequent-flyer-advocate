@@ -480,6 +480,25 @@ def test_unknown_airline_error_names_what_is_known():
     assert payload["known"] == ["AA", "WN"], payload
 
 
+def test_skill_does_not_restate_per_airline_metadata():
+    # script-as-black-box: SKILL.md names the contract and reads channel_notes at runtime.
+    # A per-airline classification copied into skill prose goes stale the moment the
+    # metadata changes, and keeps routing agents by the stale copy.
+    skill = os.path.normpath(os.path.join(HERE, "..", "SKILL.md"))
+    with open(skill, encoding="utf-8") as f:
+        text = f.read()
+    with open(SHIPPED_METADATA, encoding="utf-8") as f:
+        md = json.load(f)
+    for code, airline in md["airlines"].items():
+        assert airline["name"] not in text, \
+            f"SKILL.md names {airline['name']}; per-airline policy belongs in the metadata"
+        for chan in airline["channels"].values():
+            limit = chan.get("char_limit")
+            if limit is not None:
+                assert str(limit) not in text, \
+                    f"SKILL.md hardcodes {code}'s {limit}-char limit; read it from the script"
+
+
 def test_shipped_metadata_records_provenance_for_every_limit():
     with open(SHIPPED_METADATA, encoding="utf-8") as f:
         md = json.load(f)
