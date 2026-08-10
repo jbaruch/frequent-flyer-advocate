@@ -40,53 +40,18 @@ grounded in the airline's own published policies, vision statements, and federal
 ## Step 1 — Bootstrap the Storage
 
 One-time setup on a machine that has never run this skill. Both data stores live under
-`~/.claude/` so every skill shares one copy:
+`~/.claude/` so every skill shares one copy.
 
-- **Travel credits** — `~/.claude/travel-credits/` (shared with `jbaruch/travel-policy` — the
-  two skills MUST point at the same directory)
-- **Complaint bank** — `~/.claude/complaint-bank/`
+Before the first `credits-tracker.py` or `complaints-bank.py` call, run each store's
+`status --json` and branch on its exit code: `0` ready, `3` missing, `4` invalid.
 
-The scripts **refuse to run** (rather than silently creating an empty store) unless the store
-path exists as a directory — or a symlink to a directory. A missing path, a dangling symlink
-(cloud folder not mounted), or a plain file sitting where the store should be all fail loudly.
-This is deliberate: if you keep the inventory in cloud storage (Google Drive/Dropbox/iCloud)
-and it just isn't linked on this machine yet, auto-creating an empty one would fork your data
-into two diverging copies.
+For anything other than `0`, follow
+[references/store-bootstrap.md](references/store-bootstrap.md) — it carries the commands,
+the question to put to the user, and the dangling-symlink case. Never create a store
+unasked: an inventory sitting unlinked in cloud storage is indistinguishable from an
+absent one, and creating a second forks the data.
 
-**Before the first `credits-tracker.py` or `complaints-bank.py` call**, check each store and
-bootstrap if missing:
-
-```bash
-# Each store's `status` subcommand owns the readiness contract (no shell logic here):
-# exits 0 / 3 / 4 for ready / missing / invalid.
-# Both report {"state", "store", "reason"}; branch on the exit code.
-python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py status --json
-python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/complaints-bank.py status --json
-```
-
-For each store reported `MISSING` (or `INVALID`), ask the user (via `AskUserQuestion`) whether they already
-have one:
-
-> I don't see a `travel-credits` database on this machine. Do you already have one
-> (e.g. synced in Google Drive / Dropbox / iCloud), or should I start fresh?
-> 1. **Link an existing one** — I'll symlink it into `~/.claude/`
-> 2. **Start a fresh one** at `~/.claude/travel-credits/`
-> 3. **Start a fresh one at a custom path** (e.g. a cloud folder) — I'll symlink it back
-
-Then run the matching command (use the same wording for the complaint bank):
-
-```bash
-# 1. Link an existing database (ask for the path first):
-python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py link --json --path "<existing-dir>"
-# 2. Fresh at default:
-python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py init --json --default
-# 3. Fresh at custom path:
-python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py init --json --path "<dir>"
-```
-
-If a command reports a **dangling symlink** (target missing), the cloud folder isn't mounted
-— tell the user rather than re-creating the store. Once both stores report `ready`, proceed
-immediately to Step 2.
+Once both stores report ready, proceed immediately to Step 2.
 
 ---
 
@@ -263,7 +228,10 @@ Once the research gate is satisfied, proceed immediately to Step 8.
 
 ## Step 8 — Construct the Letter
 
-Build the letter using this structure. Every section has a strategic purpose.
+Build the letter section by section from
+[references/letter-anatomy.md](references/letter-anatomy.md) — subject line, opening,
+incident narrative, impact, the airline's own words, regulatory basis, requested remedy,
+closing, and tone. Every section there states its strategic purpose.
 
 **Important: use your Step 6 verification data.** Any flight data you confirmed via
 FlightAware in Step 6 is verified fact — use it in the letter with explicit attribution
@@ -272,77 +240,6 @@ confirmed it. If FlightAware provided timestamps, delay durations, or flight sta
 these MUST appear in the incident narrative attributed to "publicly available flight
 tracking records" or "FlightAware." This independently verified data is one of the
 letter's strongest assets.
-
-### Subject line
-Concise; include flight number, date, and loyalty tier if applicable.
-Example: "Diamond Medallion Member — Unacceptable Experience on DL1234, Feb 15, 2026"
-
-### Opening — establish the relationship
-Lead with loyalty — years of patronage, miles flown, tier status, emotional connection to
-the brand. (See letter-quality rule for specific requirements.)
-
-### Incident narrative
-Chronological, factual, specific. Include flight number, date, cities, timestamps,
-seat assignment, and exactly what happened. Use dispassionate language — facts speak for
-themselves. Note crew/agent responses factually.
-
-Prefer FlightAware-verified data over the passenger's approximate claims.
-(See letter-quality rule for specific requirements.)
-
-### Impact statement
-Concrete consequences: financial losses, missed events, hours wasted, family stress.
-Quantify where possible. "The 11-hour delay caused me to miss my daughter's college
-graduation — an event that cannot be rescheduled."
-
-### The airline's own words vs. reality
-Quote the airline's mission statement, vision, Customer Service Plan, or Contract of
-Carriage — then contrast with actual experience.
-
-> "Your Customer Service Plan states: '[exact quote].' My experience was the opposite:
-> [what actually happened]."
-
-> "[Airline CEO]'s letter to customers promises '[aspirational quote].' On Flight 1234,
-> that promise was broken when [specific failure]."
-
-### Regulatory basis
-Cite specific regulations violated or that entitle the passenger to compensation —
-DOT rules, FAA Reauthorization Act provisions, or enforcement precedent. Be precise;
-cite the specific rule, not vague references to "federal regulations."
-
-### Requested remedy
-Specific, calibrated, reasonable but firm. Read [references/compensation.md](references/compensation.md)
-for severity tiers and ranges. Always request a response within 14–21 business days.
-
-### Closing
-Express that you value the relationship and want to continue it, but make clear that the
-response will influence future loyalty. State — factually, not as a threat — that you are
-aware of your right to file a DOT complaint if the matter is not resolved satisfactorily.
-
-### Tone throughout
-Professional, measured, confident, and informed — never angry, sarcastic, or pleading.
-Concise but thorough.
-
-### Form-mode variant
-
-Long form is the default and stays unchanged for email and paper mail. When Step 3 recorded
-a **web form**, build a second, shorter variant instead:
-
-- Drop what the form captures in its own fields (Step 3 recorded which). The form shows the
-  agent those values already; repeating them spends the character budget twice.
-- Keep every mandatory element the letter-quality rule marks as surviving compression — the
-  loyalty tier in the opening sentence survives even when the loyalty number is dropped.
-- Write plain prose. Markdown bold, headings, bullets, blockquotes, and links may render as
-  literal punctuation in a plain-text field.
-
-Route on the channel Step 3 recorded:
-
-- **Web form** — proceed immediately to Step 9.
-- **Email or paper mail** — nothing to measure. Skip to Step 10.
-- **Undecided** — ask the user to choose now; the variant and the length budget both depend
-  on it. If they still decline to choose, build the long form, tell them a web form needs a
-  fitted variant, and skip to Step 10.
-
----
 
 ## Step 9 — Verify the Letter Fits the Form
 

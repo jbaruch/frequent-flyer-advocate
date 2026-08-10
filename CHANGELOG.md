@@ -1,5 +1,14 @@
 # Changelog
 
+### Changed
+
+- `frequent-flyer-advocate/SKILL.md` drops from ~6,083 tokens to ~4,791, under the 5,000 `tessl plugin lint` recommends. Resolves #38.
+  - `skill-authoring` Keep Skills Compact makes SKILL.md the execution plan and reference files the destination for detail moved off it. Two sections were reference material sitting on the loaded surface, and both are now `references/`:
+  - `references/letter-anatomy.md` — the letter's section-by-section structure and the strategic purpose of each part. A template, read while writing; Step 8 says when and links to it. It was the largest section in the file at 82 lines.
+  - `references/store-bootstrap.md` — where the two stores live, why the scripts refuse rather than create, the three bootstrap commands, and the question to put to the user. Step 1 keeps what an agent must do in order — run `status --json`, branch on the exit code, never create a store unasked — and defers the rest.
+  - The mount-path guard now scans the reference files too. Moving an invocation off SKILL.md would otherwise have moved it out from under the check that keeps every command copy-pasteable from a consumer, which is a guard weakened by the very act of tidying.
+  - A new test keeps the two surfaces wired: every reference file must be linked from SKILL.md, and every link must resolve. A reference nothing points at is dead weight; a link to nothing is a broken step. Both directions verified to fail when violated.
+
 ## 0.9.37 — 2026-08-10
 
 ### Added
