@@ -1,5 +1,21 @@
 # Changelog
 
+### Added
+
+- `credits-tracker.py update` edits an existing record's fields. Resolves #2.
+  - The workflow it exists for: the airline confirms compensation ("I've issued a £150 voucher; full details in a separate email") and the expiry, voucher number, PIN, and restrictions arrive minutes-to-days later. There was no CLI path to fill them in. The two available routes were both wrong — hand-edit `inventory.md`, whose own header says not to, or mark the half-entered credit `use`d and `add` a fresh one, which pollutes the archive with a ghost record and burns an id.
+  - Only the fields passed are written; the rest are left alone. `--description`, `--value`, `--expiry`, `--passenger`, `--airline`, `--brand`, `--confirmation`, `--restrictions`. At least one is required — an update naming no field is a caller mistake, not a no-op, and it says so.
+  - A text-level field edit, for the same reason the migration is one: reserializing through `format_credit()` would write the ten fields it knows and silently drop anything else the record carries. An existing field is replaced where it sits, keeping its indentation; a new one is appended after the last recognized field. A test pins that an unknown field survives.
+  - `--expiry` is validated before anything is written, so a rejected update leaves the store byte-identical rather than half-applied.
+  - Deposits are reachable. #2 scoped this to the active section, which predates the Compensation History section — a case number can arrive late for a miles grant exactly as it can for a voucher, and both are current records. `--expiry` on a deposit is still refused, matching `add`.
+  - An archived record reports `record_is_archived`, not `not_found`. A settled record is sitting right there, and "not found" would send the caller hunting for it. `use` recorded its outcome; editing it would rewrite history rather than complete it.
+  - A value carrying a line break is refused, on `add` and `use` as well as `update`. The record format is line-oriented, so a newline in a value is not stored as text — it becomes structure. Demonstrated before the guard: `update --description "Pwned\n### #99 — [ECREDIT] Injected"` spliced in a whole record and the store listed **id 99 in place of id 1**, and `add --value "5.00\n- **Expiry**: 2099-01-01"` wrote an expiry the caller never passed while `next_id` counted the injected heading. Rejected rather than escaped: no legitimate field is multi-line. The hole predates `update` — `add` and `use --note` had it too, and all three are closed together.
+  - Router Step 9, with the steps after it renumbered.
+
+### Changed
+
+- `SKILL.md` drops a rationale clause left over from the previous change, deferred from #41 rather than spending a re-review round on it alone.
+
 ## 0.9.33 — 2026-08-10
 
 ### Changed

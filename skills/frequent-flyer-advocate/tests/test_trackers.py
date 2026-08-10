@@ -1292,6 +1292,166 @@ def test_migrate_does_not_rewrite_a_newer_record_down():
         assert vline(99) in fh.read()
 
 
+# ── update ────────────────────────────────────────────────────────────────────
+
+def _voucher_home(prefix):
+    home = _mktemp(prefix)
+    assert run(CREDITS, ["init", "--default"], home).returncode == 0
+    assert run(CREDITS, ["add", "--json", "--type", "VOUCHER", "--desc", "150 voucher",
+                         "--value", "150.00", "--airline", "BA"], home).returncode == 0
+    return home
+
+
+def test_update_fills_in_details_that_arrive_later():
+    """The workflow this exists for: the airline confirms, the details follow.
+
+    Before it, the only routes were hand-editing a file whose header forbids it, or
+    marking the half-entered credit used and re-adding it — which pollutes the archive
+    with a ghost record and burns an id.
+    """
+    home = _voucher_home("update-later-")
+    payload = _json_out(run(CREDITS, ["update", "--json", "--id", "1",
+                                      "--expiry", "2024-06-30",
+                                      "--confirmation", "BA-VCH-99812",
+                                      "--restrictions", "Non-transferable"], home))
+    assert payload["fields_changed"] == ["Confirmation", "Expiry", "Restrictions"], payload
+
+    credit = _json_out(run(CREDITS, ["list", "--json"], home))["credits"][0]
+    assert credit["expiry"] == "2024-06-30"
+    assert credit["confirmation"] == "BA-VCH-99812"
+    assert credit["restrictions"] == "Non-transferable"
+    assert credit["value"] == "150.00", "an omitted field must be preserved, not cleared"
+    assert credit["airline"] == "BA"
+
+
+def test_update_replaces_an_existing_field_and_the_description():
+    home = _voucher_home("update-replace-")
+    payload = _json_out(run(CREDITS, ["update", "--json", "--id", "1", "--value", "175.00",
+                                      "--description", "175 voucher (revised)"], home))
+    assert set(payload["fields_changed"]) == {"Value", "Description"}, payload
+
+    credit = _json_out(run(CREDITS, ["list", "--json"], home))["credits"][0]
+    assert credit["value"] == "175.00" and credit["description"] == "175 voucher (revised)"
+    assert _json_out(run(CREDITS, ["list", "--json"], home))["count"] == 1, \
+        "update must not duplicate the record"
+
+
+def test_update_preserves_fields_the_formatter_does_not_know():
+    """A text-level edit, for the same reason the migration is one."""
+    home = _voucher_home("update-preserve-")
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        text = fh.read()
+    with open(inventory, "w") as fh:
+        fh.write(text.replace("- **Added**:", "- **Unknown legacy field**: keep me\n- **Added**:"))
+
+    run(CREDITS, ["update", "--json", "--id", "1", "--value", "160.00"], home)
+    with open(inventory) as fh:
+        after = fh.read()
+    assert "- **Unknown legacy field**: keep me" in after, f"field dropped:\n{after}"
+
+
+def test_update_rejects_an_unknown_id():
+    home = _voucher_home("update-unknown-")
+    r = run(CREDITS, ["update", "--json", "--id", "99", "--value", "1.00"], home)
+    assert r.returncode != 0
+    payload = _json_out(r)
+    assert payload["error"] == "not_found" and payload["id"] == 99, payload
+    assert "99" in r.stderr, "the message must name the id"
+
+
+def test_update_names_the_archive_rather_than_reporting_not_found():
+    """A settled record is sitting right there; "not found" would send the caller hunting."""
+    home = _voucher_home("update-archived-")
+    assert run(CREDITS, ["use", "--json", "--id", "1", "--note", "used"], home).returncode == 0
+    r = run(CREDITS, ["update", "--json", "--id", "1", "--value", "5.00"], home)
+    assert r.returncode != 0
+    assert _json_out(r)["error"] == "record_is_archived", r.stdout
+
+
+def test_update_validates_the_expiry_before_writing():
+    home = _voucher_home("update-badexpiry-")
+    inventory = os.path.join(home, ".claude", "travel-credits", "inventory.md")
+    with open(inventory) as fh:
+        before = fh.read()
+
+    r = run(CREDITS, ["update", "--json", "--id", "1", "--expiry", "June 30"], home)
+    assert r.returncode != 0
+    assert _json_out(r)["error"] == "invalid_expiry", r.stdout
+
+    with open(inventory) as fh:
+        assert fh.read() == before, "a rejected update must not touch the store"
+
+
+def test_update_requires_at_least_one_field():
+    home = _voucher_home("update-nofields-")
+    r = run(CREDITS, ["update", "--json", "--id", "1"], home)
+    assert r.returncode != 0
+    payload = _json_out(r)
+    assert payload["error"] == "no_fields_given", payload
+    assert "description" in payload["updatable"], payload
+
+
+def test_update_reaches_a_deposit_but_still_refuses_an_expiry():
+    """Deposits are current records too — a case number can arrive late for them as well."""
+    home = _mktemp("update-deposit-")
+    run(CREDITS, ["init", "--default"], home)
+    run(CREDITS, ["add", "--json", "--type", "MILES", "--desc", "8,000 SkyMiles",
+                  "--value", "8000 miles", "--airline", "DL"], home)
+
+    payload = _json_out(run(CREDITS, ["update", "--json", "--id", "1",
+                                      "--confirmation", "Case 19912032"], home))
+    assert payload["updated"]["section"] == "compensation", payload
+    assert _json_out(run(CREDITS, ["history", "--json"], home))["deposits"][0]["confirmation"] \
+        == "Case 19912032"
+
+    r = run(CREDITS, ["update", "--json", "--id", "1", "--expiry", "2024-01-01"], home)
+    assert r.returncode != 0
+    assert _json_out(r)["error"] == "expiry_not_valid_for_deposit", r.stdout
+
+
+# ── line-oriented store: no value may become structure ────────────────────────
+
+def test_a_newline_in_a_value_cannot_inject_record_structure():
+    """The record format is line-oriented, so a newline in a value becomes structure.
+
+    Demonstrated before the guard existed: `update --description` carrying a `### #99`
+    line spliced in a whole record and the store listed id 99 in place of id 1, and
+    `add --value` carrying an `Expiry` line wrote an expiry the caller never passed.
+    """
+    home = _voucher_home("inject-")
+    injections = [
+        (["update", "--json", "--id", "1", "--description",
+          "Pwned\n\n### #99 — [ECREDIT] Injected\n- **Value**: 99999.00"], "description"),
+        (["update", "--json", "--id", "1", "--value", "5.00\n- **Expiry**: 2024-01-01"], "value"),
+        (["add", "--json", "--type", "VOUCHER", "--desc", "Second",
+          "--value", "5.00\n- **Expiry**: 2024-01-01"], "value"),
+        (["add", "--json", "--type", "VOUCHER", "--desc",
+          "X\n### #98 — [ECREDIT] Injected", "--value", "1.00"], "description"),
+        (["use", "--json", "--id", "1", "--note", "ok\n- **Value**: 0"], "note"),
+    ]
+    for argv, field in injections:
+        r = run(CREDITS, argv, home)
+        assert r.returncode != 0, f"{argv[0]} accepted a newline in --{field}: {r.stdout}"
+        payload = _json_out(r)
+        assert payload["error"] == "multiline_value", payload
+        assert payload["fields"] == [field], payload
+
+    listed = _json_out(run(CREDITS, ["list", "--json"], home))
+    assert [c["id"] for c in listed["credits"]] == [1], f"the store must be untouched: {listed}"
+    assert listed["credits"][0]["description"] == "150 voucher"
+    assert "expiry" not in listed["credits"][0], "no field the caller never passed"
+
+
+def test_a_carriage_return_is_rejected_too():
+    """A lone CR splits a line in the same way; the guard covers both."""
+    home = _voucher_home("inject-cr-")
+    r = run(CREDITS, ["update", "--json", "--id", "1",
+                      "--confirmation", "ABC\r- **Value**: 0"], home)
+    assert r.returncode != 0
+    assert _json_out(r)["error"] == "multiline_value", r.stdout
+
+
 # ── compensation deposits: history, not inventory ─────────────────────────────
 
 _V1_STORE_WITH_DEPOSITS = """# Flight Credits, Vouchers & Upgrade Certificates Inventory

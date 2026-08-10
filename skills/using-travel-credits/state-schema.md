@@ -62,7 +62,7 @@ The heading and `Schema version` are always written. Every other field is writte
 
 | Skill | Role | Operations |
 |---|---|---|
-| `using-travel-credits` | owner, writer, reader | `status`, `link`, `init`, `migrate`, `list`, `expiring`, `check`, `history`, `add`, `use` |
+| `using-travel-credits` | owner, writer, reader | `status`, `link`, `init`, `migrate`, `list`, `expiring`, `check`, `history`, `add`, `update`, `use` |
 | `frequent-flyer-advocate` | writer, caller | writes granted compensation with a direct `add`; reads Active and Compensation History through this skill's list and history actions, never directly |
 | `jbaruch/jbaruch-travel-policy` | caller | reaches every operation through this skill; ships no tracker of its own since its 0.7.43 |
 
@@ -100,7 +100,7 @@ The stamp is a text-level insert, not a parse-and-reformat of the whole store. R
 
 Only this skill migrates, and it migrates through one explicit operation: the `migrate` subcommand, reached from Step 3.
 
-The owner migrates what it is about to consume. Migration Policy has the owner detect an older record on read, upgrade it, and rewrite it — so the router runs Step 3 ahead of every store-touching step (4-9), not only when a user asks to migrate.
+The owner migrates what it is about to consume. Migration Policy has the owner detect an older record on read, upgrade it, and rewrite it — so the router runs Step 3 ahead of every store-touching step (4-10), not only when a user asks to migrate.
 
 A non-owner does the opposite: it declines the record. `parse_credits()` consumes only records at `SCHEMA_VERSION` exactly, omitting anything off-version in either direction with a per-record stderr warning naming the recovery. Older means the owner has not upgraded it yet; newer means the owner is ahead of this reader. Both are read-only *no usable prior state*, and neither is a record a non-owner may migrate. A record carrying no version field is declined on the same grounds: Required Attributes puts a `schema_version` on every record, and without one a reader cannot know the shape it is holding. `migrate` stamps it and it reads normally afterwards.
 
