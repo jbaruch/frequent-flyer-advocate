@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.42 — 2026-11-20
+
+- fix(advocate): Draft complaints for verified channels (#56)
+
 ## 0.9.38 — 2026-08-10
 
 ### Changed
