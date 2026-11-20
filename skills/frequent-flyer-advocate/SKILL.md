@@ -22,7 +22,7 @@ grounded in the airline's own published policies, vision statements, and federal
 **Reference files** (read when needed during execution):
 - [references/flight-verification.md](references/flight-verification.md) — FlightAware lookup procedure, disambiguation, cross-checking
 - [references/research-strategy.md](references/research-strategy.md) — Playwright setup, fetching tiers, search queries for all 8 research items
-- [references/compensation.md](references/compensation.md) — severity tiers, compensation ranges, status multiplier
+- [references/compensation.md](references/compensation.md) — verified entitlements, discretionary compensation, and when to name an amount
 - [scripts/letter-fit.py](scripts/letter-fit.py) — measures a draft against the airline's form character limit and flags markdown the form may render literally. Emits JSON on stdout in every mode. Run in Step 9 before presenting any form-mode letter: `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/letter-fit.py --airline <code> --file <draft>`. Backed by `scripts/airline-form-metadata.json`
 - [scripts/credits-tracker.py](scripts/credits-tracker.py) — flight credits/vouchers inventory, shared globally via `~/.claude/travel-credits/`
 - Run it with the full path: `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/credits-tracker.py`
@@ -83,22 +83,17 @@ long questionnaire. Listen, then ask targeted follow-ups based on what's missing
 - Loyalty program tier/status (if any) and approximate years/miles of loyalty
 - **Desired outcome** — if not already stated, ask what they want (miles, voucher, refund,
   apology, or your recommendation). This shapes the remedy section — do not skip it.
-- **Submission channel** — how they will send it: web form, email, paper mail, or undecided.
-  Ask before drafting, never after.
+- **Submission channel** — record the user's requested channel and verify where it goes.
+  If the user leaves the choice open, use the airline's published complaint channel for
+  this issue. Ask which channel they want only when the choice still matters after lookup.
 
-### If the channel is a web form
+### Find the submission destination before drafting
 
-Run `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/letter-fit.py --airline <code> --info` for what is
-already recorded about that airline's form. It emits JSON; read `metadata.channels` for the
-recorded limit and prefilled fields. Then fill the gaps from the user:
-
-- **Character limit** — ask them to read it off the form. Whatever they report is the live
-  value and outranks anything recorded; carry it to `letter-fit.py --limit <N>` in Step 9.
-  A `--info` limit is a prior observation, used only when the user cannot supply one.
-- **Fields the form captures separately** — passenger name, loyalty number, flight number,
-  date, route are typical. Anything the form collects is data the letter body can drop.
-
-Record both answers. Steps 8 and 9 need them.
+Run `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/letter-fit.py --airline <code> --info`
+for recorded channels and notes. Follow item 8 in
+[references/research-strategy.md](references/research-strategy.md). Record the
+verified destination and its source. For a form, keep the limit and fields supplied
+separately for Steps 8 and 9.
 
 ### Context-dependent follow-ups
 
@@ -116,6 +111,9 @@ relevant.
 - Number of passengers affected in the party
 
 **Documentation & prior attempts:**
+- If a flight time changed, ask which airline channel the passenger saw it in, what it
+  showed, how much notice they had, and what the change caused. Use details the passenger
+  already supplied, including a departure moved earlier at short notice.
 - Whether the issue was reported to crew or gate agents at the time, and their response
 - Prior customer service contacts and any offers already made or accepted
 - Photos, boarding passes, or receipts
@@ -214,7 +212,8 @@ queries). Key points:
    claude mcp add playwright -- npx @playwright/mcp@latest
    ```
 2. **Research all 8 items:** Customer Service Plan, Contract of Carriage, mission/vision
-   statements, tier benefits, DOT rights, FAA Reauth Act, enforcement actions, executive contacts
+   statements, tier benefits, DOT rights, FAA Reauth Act, enforcement actions, and complaint
+   routing. Reuse the submission destination verified in Step 3.
 3. **Research gate:** do not proceed to writing until you have usable findings from items
    1–6 (see letter-quality rule for verbatim quote requirement)
 
@@ -227,23 +226,19 @@ Once the research gate is satisfied, proceed immediately to Step 8.
 
 ## Step 8 — Construct the Letter
 
-Build the letter section by section from
-[references/letter-anatomy.md](references/letter-anatomy.md) — subject line, opening,
-incident narrative, impact, the airline's own words, regulatory basis, requested remedy,
-closing, and tone. Every section there states its strategic purpose.
+Use [references/letter-anatomy.md](references/letter-anatomy.md) to draft for the
+recorded channel. A web form gets only the text for its message field. An email
+or paper letter gets a standalone message with its own identifying details.
+Draft multiple formats only when the user asks for them.
 
-**Important: use your Step 6 verification data.** Any flight data you confirmed via
-FlightAware in Step 6 is verified fact — use it in the letter with explicit attribution
-(e.g., "per FlightAware flight tracking records"). This is not fabrication; you already
-confirmed it. If FlightAware provided timestamps, delay durations, or flight status,
-these MUST appear in the incident narrative attributed to "publicly available flight
-tracking records" or "FlightAware." This independently verified data is one of the
-letter's strongest assets.
+Use the relevant flight movement and status verified in Step 6 with FlightAware
+attribution. For what the airline told the passenger, follow the source guidance
+in the incident narrative section of the letter anatomy.
 
 ## Step 9 — Verify the Letter Fits the Form
 
-Form mode only. Never present a form-mode letter on your own character count. Write the
-draft to a file and measure it:
+Form mode only. Write the exact text intended for the message field to a file and
+measure it. Keep any field labels, source notes, and fit report outside that text:
 
 ```bash
 python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/letter-fit.py --airline <code> --file <draft-path>
@@ -254,7 +249,8 @@ Exit 0 means it fits, 1 means it overflows, 2 means the invocation or metadata i
 Every path emits one JSON object on stdout, failures included; read the verdict from it
 rather than recomputing anything.
 
-Presenting requires **both** exit 0 and an empty `formatting_warnings` array.
+For a known limit, presenting requires **both** exit 0 and an empty
+`formatting_warnings` array.
 
 - **Exit 1** — trim and rerun. Do not show the user an overflowing draft.
 - **Exit 0, `formatting_warnings` non-empty** — strip the flagged markup and rerun. Do not
@@ -263,8 +259,10 @@ Presenting requires **both** exit 0 and an empty `formatting_warnings` array.
   `char_limit`, and `status` from the report; never substitute a count of your own. Where
   `count_verified` is `false`, tell the user the count is unverified — the form's own counter
   is the final word, and a draft measuring close to the limit may still be rejected by it.
+  If the maximum is unavailable, label the compact draft's fit unverified.
 - **Exit 2** — stdout carries `{"error": <code>, "message": <text>}`. Fix what `message`
-  names, then rerun. Never fall back to counting by hand.
+  names, then rerun. If the only blocker is an unavailable form limit, present a compact
+  draft with fit marked unverified.
 
 Two different numbers can come back from a live form. Keep them apart:
 
@@ -296,13 +294,14 @@ Proceed immediately to Step 10.
 After presenting the letter, provide actionable next steps:
 
 **Where to send:**
-- Check the airline's recorded channels first:
-  `python3 .tessl/plugins/jbaruch/frequent-flyer-advocate/skills/frequent-flyer-advocate/scripts/letter-fit.py --airline <code> --info`
-- Follow `metadata.channel_notes` for that airline. It names known-dead or deprioritized
-  channels and the routing to use instead. Route around a channel it reports unreliable.
-- Primary (no note to the contrary): executive customer relations email found during research
-- Secondary: standard customer care (backup/paper trail)
-- Include any airline-specific submission forms
+- Present the chosen, verified destination alongside the draft. For a web form, include
+  the link and any category choices needed to reach the message field. For email, give the
+  complete recipient address and the source that verifies it. For paper mail, give the
+  department and full mailing address.
+- Use the airline's verified initial complaint channel for a first complaint. Use verified
+  executive customer relations channels when escalation fits the complaint history.
+- Keep destinations and instructions outside the text for a web form. Give submission
+  instructions to the user. Sending or submitting requires their explicit authorization.
 - If the user already contacted general customer service, see escalation-output rule.
 - If Step 7 research turns up a channel change the metadata doesn't record, state it in the
   escalation guidance and tell the user it is worth upstreaming to

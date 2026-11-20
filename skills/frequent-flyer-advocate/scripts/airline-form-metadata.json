@@ -55,7 +55,7 @@
       "name": "Southwest Airlines",
       "channels": {
         "web_form": {
-          "url": "https://www.southwest.com/contact-us",
+          "url": "https://support.southwest.com/helpcenter/contact-us",
           "char_limit": 2500,
           "limit_verified": true,
           "limit_source": "user-reported from the live form, 2026-06-13",
@@ -74,7 +74,7 @@
           "observed_inflation_source": "2026-06-13: the live form's counter read 2798 for a letter whose Python len() was 2472 (ratio 1.132, rounded up). No standard encoding reproduces the form's number — UTF-8 bytes 2482, CRLF 2495, HTML entities 2500 — so the factor stands in for an unidentified counting method."
         }
       },
-      "channel_notes": "The form's counter runs materially higher than any plain encoding of the same text. Treat 2500 as a budget to stay well under, not to fill."
+      "channel_notes": "For a flight delay, select Complaint, then Flight & Disruptions, then Flight Delay, then Next. This form captures flight date, flight number, confirmation number, origin, destination, passenger name, and Rapid Rewards number separately. The form's counter runs materially higher than any plain encoding of the same text. Stay well under the recorded 2500-character limit."
     }
   }
 }

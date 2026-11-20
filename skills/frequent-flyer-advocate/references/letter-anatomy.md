@@ -6,6 +6,11 @@ each. Read this while writing; `SKILL.md` Step 8 owns when.
 `rules/letter-quality.md` states the mandatory requirements and what a form-mode
 variant may drop — this file describes shape, that rule states the contract.
 
+### Standalone email or paper letter
+
+Use a subject line, salutation, and signed closing. Include enough passenger and
+reservation details for the airline to identify the booking from the letter.
+
 ### Subject line
 Concise; include flight number, date, and loyalty tier if applicable.
 Example: "Diamond Medallion Member — Unacceptable Experience on DL1234, Feb 15, 2026"
@@ -19,8 +24,18 @@ Chronological, factual, specific. Include flight number, date, cities, timestamp
 seat assignment, and exactly what happened. Use dispassionate language — facts speak for
 themselves. Note crew/agent responses factually.
 
-Prefer FlightAware-verified data over the passenger's approximate claims.
-(See letter-quality rule for specific requirements.)
+Use airline communications for what the airline displayed or told the passenger.
+A passenger's firsthand account of the carrier's app, text, email, or staff
+announcement is enough to describe what they saw or heard. If a changed estimate
+affected the passenger, say what the carrier showed, how much notice the passenger
+had of the change, and what happened as a result. A departure moved earlier can
+matter even when the flight still departs late.
+
+Use TripIt, byAir, and similar alerts to reconstruct or corroborate the timeline.
+Keep their estimates in research notes when the complaint is about the airline's
+communications. If the carrier's message is unknown, describe what the passenger
+can confirm and ask the airline to review its notification history. Use FlightAware
+for verified flight movement and attribute those times to FlightAware.
 
 ### Impact statement
 Concrete consequences: financial losses, missed events, hours wasted, family stress.
@@ -43,8 +58,9 @@ DOT rules, FAA Reauthorization Act provisions, or enforcement precedent. Be prec
 cite the specific rule, not vague references to "federal regulations."
 
 ### Requested remedy
-Specific, calibrated, reasonable but firm. Read [compensation.md](compensation.md)
-for severity tiers and ranges. Always request a response within 14–21 business days.
+Use the [compensation framework](compensation.md) to request any verified entitlements
+and to decide who sets the first offer for discretionary compensation. Always request
+a response within 14–21 business days.
 
 ### Closing
 Express that you value the relationship and want to continue it, but make clear that the
@@ -57,22 +73,22 @@ Concise but thorough.
 
 ### Form-mode variant
 
-Long form is the default and stays unchanged for email and paper mail. When Step 3 recorded
-a **web form**, build a second, shorter variant instead:
+For a **web form**, write the message field directly:
 
-- Drop what the form captures in its own fields (Step 3 recorded which). The form shows the
-  agent those values already; repeating them spends the character budget twice.
-- Keep every mandatory element the letter-quality rule marks as surviving compression — the
-  loyalty tier in the opening sentence survives even when the loyalty number is dropped.
-- Write plain prose. Markdown bold, headings, bullets, blockquotes, and links may render as
-  literal punctuation in a plain-text field.
+- Start with the loyalty opening and move into the incident. Omit the subject line,
+  greeting, courtesy closing, and signature. End with the requested action and
+  response deadline.
+- Omit the passenger and reservation details the form captures separately or attaches
+  from a selected booking. Include any detail needed to identify or explain the
+  incident that the airline would otherwise lack.
+- Preserve the impact, applicable policy, and remedy. Keep the elements listed in
+  the letter-quality rule and condense background and repetition to fit.
+- Write plain text and keep headings, source notes, and the character-count report
+  outside the text the user will paste.
 
 Route on the channel Step 3 recorded:
 
 - **Web form** — proceed immediately to Step 9.
 - **Email or paper mail** — nothing to measure. Skip to Step 10.
-- **Undecided** — ask the user to choose now; the variant and the length budget both depend
-  on it. If they still decline to choose, build the long form, tell them a web form needs a
-  fitted variant, and skip to Step 10.
 
 ---

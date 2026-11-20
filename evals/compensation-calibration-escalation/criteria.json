@@ -13,9 +13,9 @@
       "description": "letter-david.md requests the maximum statutory compensation for denied boarding (references the specific dollar cap, e.g., up to $1,550 as of 2024, or '400% of one-way fare up to statutory limit')"
     },
     {
-      "name": "Status-scaled compensation",
+      "name": "Loyalty supports a discretionary offer",
       "max_score": 9,
-      "description": "letter-david.md requests compensation that is explicitly elevated due to David's Executive Platinum status — mentions that elite members are entitled to proportionally greater recovery or specifically requests additional miles/benefits above what a standard member would receive"
+      "description": "letter-david.md uses David's Executive Platinum status and the disruption to support a request for a discretionary offer in addition to the statutory claim. It leaves the discretionary amount open."
     },
     {
       "name": "Out-of-pocket expense reimbursement",
