@@ -45,7 +45,7 @@
     {
       "name": "Compensation matches major disruption",
       "max_score": 10,
-      "description": "The compensation requested is consistent with a major disruption for an elite member: includes at least one of (50,000+ miles credit, full out-of-pocket expense reimbursement, or future travel voucher) AND the miles/voucher ask is NOT limited to the minor inconvenience range (e.g., not just a $50 voucher or 5,000 miles)"
+      "description": "The letter asks the airline to offer compensation commensurate with the seven-hour disruption and leaves the discretionary amount open. It may request any verified entitlement or documented reimbursement separately."
     },
     {
       "name": "Closing: DOT mention without threat",

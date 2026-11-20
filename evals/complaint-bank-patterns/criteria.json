@@ -33,9 +33,9 @@
       "description": "The letter opens with Lisa's Executive Platinum status, 6 years, and/or 1.8M miles before describing the incident"
     },
     {
-      "name": "Compensation calibrated to pattern",
+      "name": "Airline asked for a compensation offer",
       "max_score": 10,
-      "description": "The requested compensation reflects the escalated situation — higher than what was requested for the first cancellation, given that it was denied and the issue recurred"
+      "description": "The letter asks the airline to make a meaningful compensation offer for the recurring disruption and leaves the discretionary amount open. It treats the prior 50,000-mile request and $100 offer as history only."
     },
     {
       "name": "Complaint bank consulted",

@@ -32,6 +32,10 @@ Cross-check against the user's account:
 
 ## Step 3: Handle discrepancies
 
+Compare times for the same event. An actual gate departure earlier than an app's
+posted estimate can be evidence of the communication problem. Preserve the estimate
+the passenger saw and the verified actual time when both matter to the complaint.
+
 **Details don't match:**
 Tell the user specifically what doesn't align. Examples:
 - "You mentioned a 5-hour delay, but FlightAware shows DL1234 on Feb 15 arrived only

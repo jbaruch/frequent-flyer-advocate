@@ -1,0 +1,41 @@
+{
+  "context": "Checks that a complaint is drafted and routed for each requested submission channel using the supplied facts and destinations.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "Copy-ready web form message",
+      "max_score": 15,
+      "description": "The form text starts with A-List status and ends with the requested action and response timeframe. It contains no subject line, greeting, sign-off, signature, formatting, or submission instructions."
+    },
+    {
+      "name": "Reservation details omitted from the form message",
+      "max_score": 15,
+      "description": "The form text omits the passenger name, confirmation number, flight number, date, and route because they are captured separately. It retains FlightAware timing, the impact, the quoted policy, and the requested remedy."
+    },
+    {
+      "name": "Live form limit applied",
+      "max_score": 15,
+      "description": "The agent runs letter-fit.py on the exact form text with --limit 900 and reports the successful fit outside the pasted text."
+    },
+    {
+      "name": "Actionable form link",
+      "max_score": 15,
+      "description": "The output gives the verified Southwest portal link and the Complaint, Flight & Disruptions, Flight Delay, Next path separately from the form text."
+    },
+    {
+      "name": "Standalone email and verified recipient",
+      "max_score": 20,
+      "description": "The email gives customer-relations@example.test as the verified reply address. It includes a subject, salutation, signed closing, and identifiers sufficient for Customer Relations to locate the reservation."
+    },
+    {
+      "name": "Discretionary amount stays open",
+      "max_score": 10,
+      "description": "Both versions ask for an explanation and a compensation offer. Neither names a discretionary dollar or points amount. The documented $62 expense can be stated separately."
+    },
+    {
+      "name": "Airline communication drives the complaint",
+      "max_score": 10,
+      "description": "Both drafts attribute the 11:44 p.m. estimate to Southwest's app, describe the short-notice move to an earlier departure and the passenger almost missing it, and ask Southwest to account for the notification. The TripIt estimate stays outside the complaint text."
+    }
+  ]
+}

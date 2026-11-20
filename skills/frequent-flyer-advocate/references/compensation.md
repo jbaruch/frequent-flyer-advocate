@@ -1,34 +1,22 @@
 # Compensation Framework
 
-Calibrate the ask based on severity AND loyalty tier. Higher-tier members should receive
-proportionally more: the airline explicitly promises premium service to elites, elite
-members represent disproportionate revenue, and the cost of losing one far exceeds the
-cost of generous recovery.
+Ask the airline to propose discretionary compensation that reflects the documented
+disruption. Ground the request in the passenger's actual impact, loyalty, and any
+relevant repeat failures. When the airline has already made an inadequate offer,
+ask it to reconsider and make a better offer.
 
-## Severity tiers
+Name a specific discretionary dollar or points amount in the letter only if the
+passenger supplied it as their ask or explicitly asked you to choose the figure
+for the letter. A request for compensation, a voucher, or points leaves the amount
+open. If the passenger asks for advice on a figure, discuss it privately and keep
+it out of the letter until they choose it or delegate that choice. Keep any private
+minimum acceptable amount out of the letter.
 
-**Minor inconvenience** (broken amenity on short flight, delay <2hrs, minor service lapse):
-- Miles/points credit (scaled to tier)
-- Travel voucher or upgrade certificate
+Request the full amount due under any verified regulation, fare rule, or airline
+commitment. Quantify documented expenses when requesting reimbursement. State
+those claims separately from any request for discretionary compensation.
 
-**Moderate disruption** (delay 2–5hrs, missed connection rebooked same day, involuntary
-downgrade, baggage delayed >24hrs):
-- Fare difference refund (for downgrades)
-- Miles credit (25,000–50,000+ depending on program and tier)
-- Out-of-pocket expense reimbursement
-- Travel voucher ($200–500 range)
-
-**Major disruption** (cancellation requiring overnight stay, delay >5hrs, permanently
-lost baggage, stranded without rebooking assistance):
-- Full or partial ticket refund (required by law for cancellations under FAA Reauth Act)
-- All out-of-pocket expenses (hotel, meals, transport)
-- Significant miles credit (50,000–100,000+)
-- Future travel voucher
-- Status extension or qualification credit if disruption affected status earn
-
-**Rights violation** (tarmac delay >3hrs domestic / >4hrs international, denied boarding
-on non-oversold flight, refund not processed in legal timeline):
-- Maximum statutory compensation (up to $1,550 for denied boarding as of 2024)
-- Full refund
-- DOT complaint filing (strongly recommended)
-- All consequential damages
+For a recurring disruption, follow the complaint-patterns rule for where to
+describe the history. In the remedy, ask for a compensation offer that reflects
+the recurrence and a flight-specific explanation if the previous response left
+the cause unresolved.

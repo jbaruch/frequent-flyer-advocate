@@ -89,7 +89,29 @@ Search for provisions relevant to the specific complaint.
 Recent fines or consent orders demonstrate a pattern and add implicit pressure.
 Search: `DOT enforcement action "[airline]"` or `site:transportation.gov consent order "[airline]"`
 
-**8. Executive contacts**
-Many airlines have executive customer relations channels that bypass front-line service.
-Aviation advocacy sites (e.g., Elliott Advocacy) often maintain current lists.
-Search: `"[airline]" executive customer relations email` or `"[airline]" CEO email complaints`
+**8. Complaint submission and escalation contacts**
+
+During Step 3, check the airline's official Customer Relations or contact page
+for the current route to this complaint type. Use the official page when
+`letter-fit.py --info` has no entry for the airline.
+
+- **Web form** — verify the direct form URL. If the form opens inside the contact
+  portal, record the portal URL and menu choices. Treat an “Email us” button
+  that opens a form as a web form.
+- **Email** — verify the full recipient address against the airline's published
+  instructions or the reply path in an existing, relevant airline thread.
+  If the address cannot be verified, report that and give the verified alternative.
+- **Paper mail** — verify the department and complete mailing address.
+
+For a web form, read the recorded limit and fields from `metadata.channels`.
+Use the live form or the user's description to confirm them when available.
+Carry a live limit to `letter-fit.py --limit <N>` in Step 9. Use the recorded
+limit as a fallback. Record details supplied through prefilled inputs, dedicated
+fields, or a selected reservation or flight so the draft can omit them. Ask the
+user only about unresolved details that affect the draft.
+
+Reuse the verified destination during Step 7. When escalating, look up a current
+executive customer relations destination. Third-party directories can provide
+leads. Verify that an address handles customer complaints before giving it to the user.
+Search: `site:[airline domain] customer relations complaint` or
+`"[airline]" executive customer relations contact`
